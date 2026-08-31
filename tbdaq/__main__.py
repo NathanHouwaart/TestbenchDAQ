@@ -12,8 +12,15 @@ from typing import Any
 from tbdaq.config import ConfigError, SessionConfig, session_config_from_mapping
 
 
-def _setup_console_logging(verbose: bool, quiet: bool) -> None:
-    level = logging.DEBUG if verbose else logging.WARNING if quiet else logging.INFO
+def _setup_console_logging(verbose: int, quiet: int) -> None:
+    if verbose:
+        level = logging.DEBUG
+    elif quiet >= 2:
+        level = logging.ERROR
+    elif quiet:
+        level = logging.WARNING
+    else:
+        level = logging.INFO
     logging.basicConfig(
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
@@ -46,6 +53,7 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
     base_dir = config_path.parent if config_path else Path.cwd()
 
     _set_if_not_none(values, "mode", args.mode)
+    _set_if_not_none(values, "name", args.name)
     _set_if_not_none(values, "output_root", args.output_root)
     _set_if_not_none(values, "run_count", args.run_count)
     if args.manual:
@@ -54,6 +62,7 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
         _set_if_not_none(values, "run_duration_s", args.run_duration_s)
     _set_if_not_none(values, "run_period_s", args.run_period_s)
     _set_if_not_none(values, "missed_start_tolerance_s", args.missed_start_tolerance_s)
+    _set_if_not_none(values, "missed_start_policy", args.missed_start_policy)
     _set_if_not_none(values, "allow_partial", args.allow_partial)
 
     gator = values.setdefault("gator", {})
@@ -79,6 +88,15 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
     _set_if_not_none(endaq, "ide_converter_path", args.endaq_ide_converter)
     _set_if_not_none(endaq, "command_timeout_s", args.endaq_command_timeout_s)
     _set_if_not_none(endaq, "remount_timeout_s", args.endaq_remount_timeout_s)
+    _set_if_not_none(endaq, "minimum_free_space_bytes", args.endaq_minimum_free_space_bytes)
+    _set_if_not_none(endaq, "estimated_bytes_per_second", args.endaq_estimated_bytes_per_second)
+    _set_if_not_none(endaq, "recording_time_limit_s", args.endaq_recording_time_limit_s)
+    _set_if_not_none(endaq, "recording_size_limit_bytes", args.endaq_recording_size_limit_bytes)
+    _set_if_not_none(
+        endaq,
+        "delete_after_verified_offload",
+        args.endaq_delete_after_verified_offload,
+    )
 
     return session_config_from_mapping(values, base_dir=base_dir)
 
@@ -89,7 +107,15 @@ def _make_parser() -> argparse.ArgumentParser:
         description="Coordinated Gator and enDAQ test-bench acquisition",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=("run", "show-config", "endaq-info", "endaq-stop"),
+        default="run",
+        help="Run, show resolved config, inspect enDAQ, or stop/remount an enDAQ",
+    )
     parser.add_argument("--config", metavar="PATH", help="JSON configuration file")
+    parser.add_argument("--name", metavar="NAME", help="Human-readable session name prefix")
     parser.add_argument("--mode", choices=("diagnostic", "prognostic"))
     parser.add_argument("--output-root", metavar="DIR")
     parser.add_argument("--run-count", type=int, metavar="N")
@@ -103,14 +129,25 @@ def _make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-period-s", type=float, metavar="SECONDS")
     parser.add_argument("--missed-start-tolerance-s", type=float, metavar="SECONDS")
     parser.add_argument(
+        "--missed-start-policy",
+        choices=("abort", "start_late"),
+        help="Abort a late prognostic run or start it immediately with a warning",
+    )
+    parser.add_argument(
         "--allow-partial",
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Continue when an enabled sensor is unavailable or fails to start",
     )
     verbosity = parser.add_mutually_exclusive_group()
-    verbosity.add_argument("--verbose", action="store_true")
-    verbosity.add_argument("--quiet", action="store_true")
+    verbosity.add_argument(
+        "-v", "--verbose", action="count", default=0,
+        help="Show debug output; includes native Gator library messages",
+    )
+    verbosity.add_argument(
+        "-q", "--quiet", action="count", default=0,
+        help="Reduce output (-q warnings/errors, -qq errors only)",
+    )
 
     gator = parser.add_argument_group("Gator")
     gator.add_argument(
@@ -145,9 +182,23 @@ def _make_parser() -> argparse.ArgumentParser:
     endaq.add_argument("--endaq-serial", metavar="SERIAL")
     endaq.add_argument("--endaq-model", metavar="MODEL")
     endaq.add_argument("--endaq-mount-path", metavar="PATH")
-    endaq.add_argument("--endaq-ide-converter", metavar="COMMAND_OR_PATH")
+    endaq.add_argument(
+        "--endaq-ide-converter",
+        metavar="COMMAND_OR_PATH",
+        help="Deprecated compatibility option; direct IDE export is built in",
+    )
     endaq.add_argument("--endaq-command-timeout-s", type=float, metavar="SECONDS")
     endaq.add_argument("--endaq-remount-timeout-s", type=float, metavar="SECONDS")
+    endaq.add_argument("--endaq-minimum-free-space-bytes", type=int, metavar="BYTES")
+    endaq.add_argument("--endaq-estimated-bytes-per-second", type=int, metavar="BYTES")
+    endaq.add_argument("--endaq-recording-time-limit-s", type=int, metavar="SECONDS")
+    endaq.add_argument("--endaq-recording-size-limit-bytes", type=int, metavar="BYTES")
+    endaq.add_argument(
+        "--endaq-delete-after-verified-offload",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Delete recorder-side IDE only after size and SHA-256 verification",
+    )
     return parser
 
 
@@ -163,6 +214,23 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        if args.action == "show-config":
+            print(json.dumps(config.to_dict(), indent=2, sort_keys=True))
+            return 0
+        if args.action != "run":
+            if not config.endaq.enabled:
+                raise ConfigError(
+                    f"endaq.enabled must be true for the {args.action} action."
+                )
+            from tbdaq.adapters.endaq import EndaqAdapter
+
+            adapter = EndaqAdapter(config.endaq, run_duration_s=config.run_duration_s)
+            if args.action == "endaq-info":
+                print(json.dumps(adapter.describe(), indent=2, sort_keys=True))
+            else:
+                print(adapter.stop_recording_and_remount())
+            return 0
+
         from tbdaq.session import Session
 
         manifest = Session(config).run()

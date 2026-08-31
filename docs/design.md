@@ -1,11 +1,12 @@
-# Phase 1 design contract
+# Phase 2 design contract
 
 ## Safety defaults
 
 - Sensor families are disabled unless explicitly enabled.
 - Every enabled family is required unless `allow_partial` is true.
 - A failed required start causes already-started sensors to be stopped.
-- Recorder-side enDAQ files are retained.
+- Recorder-side enDAQ files are retained unless verified deletion is explicitly
+  configured.
 - Invalid and unknown configuration values fail before hardware is commanded.
 
 ## Session states
@@ -33,7 +34,36 @@ Prognostic run starts are calculated from one monotonic base time. Completion
 of the preceding run does not redefine the schedule. This prevents processing
 time from silently shifting a test program.
 
-If the next start is later than its configured tolerance, the session aborts.
+If the next start is later than its configured tolerance, `start_late` records
+the lateness and continues immediately. Strict `abort` policy remains
+available.
+
+enDAQ stop, remount, offload, and checksum verification are part of every run.
+Prognostic IDE signal export is deferred until scheduled acquisition has ended.
+This separates mandatory recorder-space management from optional processing.
+
+IDE signals are exported directly from one parsed/calibrated IDE document.
+Final CSV formatting is chunked; intermediate combined channel CSVs are not
+generated.
+
+## enDAQ lifecycle
+
+The enDAQ library's start return value is not treated as authoritative because
+its serial implementation can compare a stale response status after sending
+the command. A successful storage dismount proves recording started.
+
+Stop retries the configured recorder's serial interface for up to
+`remount_timeout_s`, then rediscovers the mounted recorder by identity. A start
+command with uncertain outcome is always included in cleanup.
+
+Before each run, TestbenchDAQ snapshots recorder filenames and storage
+capacity. After remount, it accepts only newly appearing IDE filenames, copies
+all of them, and verifies size and SHA-256. It never silently substitutes an
+older "latest" file.
+
+The standalone `endaq-stop` action is intentionally limited to stopping and
+remounting an already-recording configured device. It is not a general session
+recovery mechanism.
 
 ## Time terminology
 

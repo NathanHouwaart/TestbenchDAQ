@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+from contextlib import ExitStack
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,10 +39,12 @@ def export_gator_signals(
     isa_dir: Path,
     gator_label: str = "gator",
 ) -> list[SignalFile]:
-    """Split a gator_channel.csv into one time,value CSV per non-zero sensor column.
+    """Split a gator_channel.csv into one time,value CSV per sensor column.
 
     Time axis is run-relative seconds (t=0 at first sample).
-    Sensor columns that are all-zero (inactive) are skipped.
+    All eight columns are exported, including all-zero channels, so every run
+    has a deterministic signal schema. Zero values remain useful evidence that
+    a sensor was absent or not detected during that run.
     """
     isa_dir.mkdir(parents=True, exist_ok=True)
     results: list[SignalFile] = []
@@ -69,10 +72,6 @@ def export_gator_signals(
 
     for col in _GATOR_SENSOR_COLUMNS:
         if col not in header:
-            continue
-
-        # Skip columns that are all zero (sensor not connected)
-        if all(row[col] == "0" for row in rows):
             continue
 
         alias = f"{gator_label}_{col}"
@@ -110,7 +109,7 @@ def export_gator_signals(
             source_file=source_rel,
             source_column="",
             status="failed",
-            error="No active (non-zero) sensor columns found.",
+            error="No Gator sensor columns found.",
         ))
 
     return results
@@ -223,6 +222,120 @@ def export_endaq_signals(
                     error=str(exc),
                 ))
 
+    return results
+
+
+def export_endaq_ide_signals(
+    ide_path: Path,
+    signal_dir: Path,
+    *,
+    chunk_size: int = 65_536,
+) -> list[SignalFile]:
+    """Parse one IDE once and write final per-signal CSVs directly.
+
+    This avoids the former IDE -> combined channel CSV -> per-signal CSV
+    pipeline, which formatted and read the same high-rate data twice. Final
+    CSV formatting is chunked to avoid another full-size array allocation.
+    Output remains run-relative seconds, with t=0 at each channel's first
+    sample, matching the existing interim signal format.
+    """
+    try:
+        import numpy as np
+        from idelib import importer
+    except Exception as exc:
+        return [SignalFile(
+            alias="endaq",
+            path=signal_dir,
+            source_file=str(ide_path),
+            source_column="",
+            status="failed",
+            error=f"Could not import idelib/numpy: {exc}",
+        )]
+
+    signal_dir.mkdir(parents=True, exist_ok=True)
+    results: list[SignalFile] = []
+    used_aliases: set[str] = set()
+    document = None
+    try:
+        document = importer.openFile(str(ide_path))
+        channel_ids = [
+            channel.id
+            for channel in document.channels.values()
+            if any(subchannel.visibility < 10 for subchannel in channel.subchannels)
+        ]
+        loaded_ids = set(channel_ids)
+        if 8 in loaded_ids:
+            # Channel 8 calibration may depend on temperature channels.
+            loaded_ids.update((20, 36))
+        importer.readData(document, channels=sorted(loaded_ids))
+
+        for channel_id in channel_ids:
+            channel = document.channels.get(channel_id)
+            if channel is None:
+                continue
+            events = channel.getSession()
+            if len(events) == 0:
+                continue
+
+            first_time_us = float(events[0][0])
+            channel_label = _sanitize(channel.displayName or channel.name)
+            channel_results: list[SignalFile] = []
+            try:
+                with ExitStack() as stack:
+                    handles = []
+                    for subchannel in channel.subchannels:
+                        alias = _unique_alias(
+                            used_aliases,
+                            f"endaq_{channel_label}_{_sanitize(subchannel.name)}",
+                        )
+                        output_path = signal_dir / f"{alias}.csv"
+                        handle = stack.enter_context(output_path.open("w", encoding="utf-8"))
+                        value_label = subchannel.name.replace("\n", " ")
+                        handle.write(f'time_s,"{value_label}"\n')
+                        handles.append(handle)
+                        channel_results.append(SignalFile(
+                            alias=alias,
+                            path=output_path,
+                            source_file=str(ide_path),
+                            source_column=subchannel.name,
+                            status="success",
+                        ))
+
+                    for start in range(0, len(events), chunk_size):
+                        values = events.arraySlice(start, min(start + chunk_size, len(events)))
+                        relative_s = (values[0] - first_time_us) / 1_000_000.0
+                        for index, handle in enumerate(handles, start=1):
+                            np.savetxt(
+                                handle,
+                                np.column_stack((relative_s, values[index])),
+                                delimiter=",",
+                                fmt=("%.6f", "%.9g"),
+                            )
+                results.extend(channel_results)
+            except Exception as exc:
+                results.extend(
+                    SignalFile(
+                        alias=result.alias,
+                        path=result.path,
+                        source_file=result.source_file,
+                        source_column=result.source_column,
+                        status="failed",
+                        error=str(exc),
+                    )
+                    for result in channel_results
+                )
+    except Exception as exc:
+        return [SignalFile(
+            alias="endaq",
+            path=signal_dir,
+            source_file=str(ide_path),
+            source_column="",
+            status="failed",
+            error=str(exc),
+        )]
+    finally:
+        if document is not None:
+            document.close()
     return results
 
 

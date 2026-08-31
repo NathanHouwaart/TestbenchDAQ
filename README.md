@@ -3,10 +3,11 @@
 TestbenchDAQ coordinates a PhotonFirst Gator FBG interrogator and an enDAQ
 recorder from one Linux command-line application.
 
-The current Phase 1 release establishes safe configuration, scheduling,
-failure handling, cleanup, manifests, and testable adapter boundaries. Signal
-CSV files are currently an interim representation. Complete cross-device time
-normalization and ISA-PHM metadata serialization are subsequent phases.
+The current Phase 2 release adds reliable enDAQ dismount/remount handling,
+per-run verified IDE offload, storage preflight, explicit recorder controls,
+and deferred prognostic signal export. Signal CSV files are currently an interim
+representation. Complete cross-device time normalization and ISA-PHM metadata
+serialization are subsequent phases.
 
 ## Supported platform
 
@@ -36,6 +37,18 @@ cmake -S gator_recorder -B gator_recorder/build \
 cmake --build gator_recorder/build
 ```
 
+Install the Gator USB access rule, reload udev, and reconnect the Gator:
+
+```bash
+sudo install -o root -g root -m 0644 \
+  udev/101-ftdi-access.rules /etc/udev/rules.d/101-ftdi-access.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+```
+
+The user running TestbenchDAQ must belong to `plugdev`. Log out and back in
+after changing group membership.
+
 Verify the command:
 
 ```bash
@@ -56,8 +69,7 @@ cp config_example.json config.json
 least one sensor must be enabled before a session can start.
 
 Paths in a JSON configuration are resolved relative to that configuration
-file. Bare executable names such as `ideexport` are resolved through `PATH`.
-Unknown or misspelled configuration keys are rejected.
+file. Unknown or misspelled configuration keys are rejected.
 
 Hardware identity is optional:
 
@@ -65,6 +77,43 @@ Hardware identity is optional:
   exactly one enDAQ must be discoverable.
 - If identity is configured, the discovered recorder must match it.
 Command-line values override JSON values.
+
+Inspect the fully resolved configuration without commanding hardware:
+
+```bash
+tbdaq --config config.json show-config
+```
+
+Give a session a readable name in JSON or on the command line:
+
+```bash
+tbdaq --config config.json --name "bearing outer-race baseline"
+```
+
+The sanitized name prefixes the collision-resistant session directory and the
+verbatim name is stored in the manifest.
+
+Inspect the mounted enDAQ and its configurable channel IDs without starting a
+recording or changing its configuration:
+
+```bash
+tbdaq --config config.json endaq-info
+```
+
+On the S3-E100D40, measurement range is selected through the channel: channel
+8 is the 100 g PE accelerometer and channel 80 is the 40 g DC accelerometer.
+Only settings present in `endaq.channels` are enforced. For example:
+
+```json
+"channels": {
+  "8":  {"enabled": true,  "sample_rate_hz": 20000},
+  "80": {"enabled": false}
+}
+```
+
+`recording_time_limit_s` and `recording_size_limit_bytes` are optional. Omit
+or use `null` to preserve the recorder's setting; use `0` to explicitly clear
+an existing limit.
 
 ## Modes and run parameters
 
@@ -103,9 +152,15 @@ tbdaq --config config.json \
   --run-period-s 300
 ```
 
-If a run misses its planned start by more than
-`missed_start_tolerance_s`, the session aborts instead of silently starting
-late.
+If enDAQ cleanup overruns a planned start, `missed_start_policy` controls the
+result. The default, `start_late`, starts immediately and records a warning and
+exact lateness. Set it to `abort` for a strict fixed schedule.
+
+Every prognostic run stops the enDAQ, waits for remount, copies and verifies
+its IDE, and only then permits the next scheduled run. IDE signal export is
+deferred until all scheduled acquisitions finish, so processing cannot delay a
+later start. Remount/offload time is scheduling overhead in addition to
+`run_duration_s`; exact lateness is retained in the manifest.
 
 ### Common measurement window
 
@@ -170,8 +225,42 @@ Use `tbdaq --help` for every available override.
 - Ctrl+C during a timed run requests cleanup before the program exits.
 - Started sensors are stopped concurrently.
 - Partial files and manifests are retained.
-- An offloaded IDE is verified by size and SHA-256.
-- The recorder-side IDE is retained; TestbenchDAQ does not delete it.
+- Every new IDE is copied after each run and verified by size and SHA-256.
+- Multiple unexpected new IDE files are all preserved and flagged.
+- `delete_after_verified_offload` defaults to `false`, retaining recorder-side
+  files.
+- For multi-day tests that exceed recorder capacity, explicitly set
+  `delete_after_verified_offload` to `true`. Deletion occurs only after the
+  host copy passes both size and SHA-256 verification, and every deletion is
+  recorded in the manifest and log.
+- At least `minimum_free_space_bytes` plus an estimated run allowance must be
+  available before recording. The allowance includes the configured remount
+  timeout because the enDAQ may continue recording while its serial stop
+  interface becomes available. The default floor is 1 GiB.
+
+If TestbenchDAQ reports that the enDAQ may already be recording, it refuses to
+take ownership automatically and prints this operator command:
+
+```bash
+tbdaq --config config.json endaq-stop
+```
+
+That command sends stop to the configured serial number and waits for remount.
+It does not attempt session offload recovery.
+
+Conversion failure does not invalidate a checksum-verified raw acquisition.
+The run remains successful with `processing_status: incomplete` and a warning
+in the manifest.
+
+TestbenchDAQ reads IDE files directly and writes final per-signal CSVs in one
+pass. It no longer creates intermediate channel CSVs. On the Odroid, the
+representative 3.64 MB `DAQ16418_000417.IDE` improved from 30.2 seconds and
+54 MB of generated text to 22.7 seconds and 32 MB. CSV remains CPU-intensive:
+hundreds of thousands of calibrated binary samples expand to more than a
+million formatted text values.
+
+Gator output always contains all eight `gator_sensor_N_fm.csv` files. An
+all-zero sensor is preserved rather than silently omitted.
 
 ## Output
 
@@ -187,8 +276,6 @@ csv-output/
       raw/
         gator/
         endaq/
-      converted/
-        endaq/
       signals/
         gator/
         endaq/
@@ -202,13 +289,24 @@ is not yet a complete ISA-PHM package.
 
 ## Convenience scripts
 
+- `scripts/run_configured.sh`
 - `scripts/run_single.sh`
 - `scripts/run_continuous.sh`
 - `scripts/run_gator_only.sh`
 - `scripts/run_burst.sh`
 - `scripts/run_soak.sh`
 
-All scripts use `config.json` and accept additional command-line overrides.
+Timing, count, period, and sensor parameters come from `config.json`; scripts
+no longer inject positional defaults. Named options are explicit overrides:
+
+```bash
+./scripts/run_burst.sh
+./scripts/run_burst.sh --run-count 5 --name trial-a
+TBDAQ_CONFIG=/path/to/test.json ./scripts/run_soak.sh
+```
+
+Normal output shows lifecycle milestones. Use `-q` for warnings/errors only,
+`-qq` for errors only, or `-v` for debug output including native Gator logs.
 
 ## Development
 
@@ -229,6 +327,8 @@ python -m compileall -q tbdaq tests
 - Gator selection still uses the first device returned by the native library.
 - Cross-device sample timestamps are not yet normalized to one shared
   reference.
-- enDAQ conversion is still a post-recording step.
+- Full interrupted-session offload/conversion recovery is not implemented.
+- Multi-day recorder-space reclamation requires explicitly enabling verified
+  recorder-side deletion.
 - Signal exports are not yet ISA-JSON or ISA-Tab.
 - Hardware acceptance and endurance tests are still required.

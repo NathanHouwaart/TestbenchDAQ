@@ -49,14 +49,24 @@ class FakeAdapter:
         discovery_error: str | None = None,
         start_error: str | None = None,
         stop_error: str | None = None,
+        needs_stop_after_failed_start: bool = False,
+        export_delay_s: float = 0,
+        clock: FakeClock | None = None,
     ) -> None:
         self.family = family
         self.discovery_error = discovery_error
         self.start_error = start_error
         self.stop_error = stop_error
+        self.needs_stop_after_failed_start = needs_stop_after_failed_start
+        self.export_delay_s = export_delay_s
+        self.clock = clock
         self.start_calls = 0
         self.stop_calls = 0
         self.result = FakeResult()
+
+    @property
+    def needs_stop(self) -> bool:
+        return self.needs_stop_after_failed_start and self.result.error is not None
 
     def discover(self) -> str | None:
         return self.discovery_error
@@ -75,6 +85,8 @@ class FakeAdapter:
         return self.result
 
     def export_run(self, run_dir: Path) -> list[SignalFile]:
+        if self.export_delay_s and self.clock:
+            self.clock.sleep(self.export_delay_s)
         if self.result.error:
             return []
         output = run_dir / "signals" / self.family / f"{self.family}_signal.csv"
@@ -169,6 +181,23 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(gator.stop_calls, 1)
         self.assertEqual(endaq.stop_calls, 0)
 
+    def test_uncertain_failed_start_is_also_cleaned_up(self) -> None:
+        endaq = FakeAdapter(
+            "endaq",
+            start_error="start state uncertain",
+            needs_stop_after_failed_start=True,
+        )
+        config = SessionConfig(
+            output_root=str(self.root),
+            run_duration_s=1,
+            endaq=EndaqConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"endaq": endaq}, session_id="uncertain-start"
+        ).run()
+        self.assertEqual(manifest["status"], "failed")
+        self.assertEqual(endaq.stop_calls, 1)
+
     def test_allow_partial_continues_with_available_sensor(self) -> None:
         gator = FakeAdapter("gator")
         endaq = FakeAdapter("endaq", discovery_error="missing")
@@ -241,6 +270,7 @@ class SessionTests(unittest.TestCase):
             run_duration_s=1,
             run_period_s=2,
             missed_start_tolerance_s=0.5,
+            missed_start_policy="abort",
             gator=GatorConfig(enabled=True),
         )
         manifest = self._session(
@@ -251,6 +281,76 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "aborted")
         self.assertEqual(manifest["runs"][1]["status"], "aborted")
         self.assertIn("missed its planned start", manifest["abort_reason"])
+
+    def test_start_late_policy_continues_after_cleanup_overrun(self) -> None:
+        gator = FakeAdapter("gator")
+        normal_export = gator.export_run
+
+        def delayed_export(run_dir: Path) -> list[SignalFile]:
+            self.clock.sleep(3)
+            return normal_export(run_dir)
+
+        gator.export_run = delayed_export  # type: ignore[method-assign]
+        config = SessionConfig(
+            mode="prognostic",
+            output_root=str(self.root),
+            run_count=2,
+            run_duration_s=1,
+            run_period_s=2,
+            missed_start_tolerance_s=0.5,
+            missed_start_policy="start_late",
+            gator=GatorConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"gator": gator}, session_id="start-late"
+        ).run()
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(manifest["runs"][1]["status"], "success")
+        self.assertIn("Starting late by policy", manifest["runs"][1]["warnings"][0])
+
+    def test_prognostic_endaq_processing_is_deferred_until_after_runs(self) -> None:
+        endaq = FakeAdapter(
+            "endaq",
+            export_delay_s=3,
+            clock=self.clock,
+        )
+        config = SessionConfig(
+            mode="prognostic",
+            output_root=str(self.root),
+            run_count=2,
+            run_duration_s=1,
+            run_period_s=2,
+            missed_start_tolerance_s=0.5,
+            endaq=EndaqConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"endaq": endaq}, session_id="deferred"
+        ).run()
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(len(manifest["runs"]), 2)
+        self.assertTrue(
+            all(run["processing_status"] == "success" for run in manifest["runs"])
+        )
+
+    def test_endaq_conversion_failure_does_not_fail_raw_acquisition(self) -> None:
+        endaq = FakeAdapter("endaq")
+
+        def failed_conversion(_run_dir: Path) -> list[SignalFile]:
+            endaq.result.conversion_status = "failed"
+            return []
+
+        endaq.export_run = failed_conversion  # type: ignore[method-assign]
+        config = SessionConfig(
+            output_root=str(self.root),
+            run_duration_s=1,
+            endaq=EndaqConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"endaq": endaq}, session_id="conversion-failure"
+        ).run()
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(manifest["runs"][0]["status"], "success")
+        self.assertEqual(manifest["runs"][0]["processing_status"], "incomplete")
 
 
 if __name__ == "__main__":

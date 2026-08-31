@@ -1,28 +1,6 @@
 #!/usr/bin/env bash
-# Gator-only measurement (no endaq).
-# Handy for quickly checking sensor signal quality without needing the endaq connected.
-#
-# Usage:  ./run_gator_only.sh [duration_s] [channel]
-# Example: ./run_gator_only.sh 10 8
+# Diagnostic Gator-only run. Timing and Gator settings come from config.json.
 set -euo pipefail
-
-DURATION="${1:-10}"
-CHANNEL="${2:-8}"
-
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR/.."
-
-[[ -f .venv/bin/activate ]] && source .venv/bin/activate
-
-[[ ! -f config.json ]] && cp config_example.json config.json && echo "Created config.json from config_example.json — edit it to set your paths."
-
-echo "Gator-only: channel ${CHANNEL} for ${DURATION}s"
-
-python3 -m tbdaq \
-  --config config.json \
-  --mode diagnostic \
-  --no-endaq \
-  --gator-channel  "$CHANNEL" \
-  --run-duration-s "$DURATION" \
-  --run-count 1 \
-  "${@:3}"
+exec "$SCRIPT_DIR/run_configured.sh" \
+  --mode diagnostic --run-count 1 --gator --no-endaq "$@"

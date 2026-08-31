@@ -99,6 +99,51 @@ class ConfigTests(unittest.TestCase):
                 base_dir=self.base,
             )
 
+    def test_endaq_channel_settings_are_typed_and_validated(self) -> None:
+        config = session_config_from_mapping(
+            {
+                "endaq": {
+                    "enabled": True,
+                    "channels": {
+                        "8": {"enabled": True, "sample_rate_hz": 20000},
+                        "80": {"enabled": False},
+                    },
+                }
+            },
+            base_dir=self.base,
+        )
+        self.assertTrue(config.endaq.channels[8].enabled)
+        self.assertEqual(config.endaq.channels[8].sample_rate_hz, 20000)
+        self.assertFalse(config.endaq.channels[80].enabled)
+
+        with self.assertRaisesRegex(ConfigError, "sample_rate_hz must be > 0"):
+            session_config_from_mapping(
+                {
+                    "endaq": {
+                        "enabled": True,
+                        "channels": {"8": {"sample_rate_hz": 0}},
+                    }
+                },
+                base_dir=self.base,
+            )
+
+    def test_session_name_and_late_start_policy_are_validated(self) -> None:
+        config = session_config_from_mapping(
+            {
+                "name": "bearing test 07",
+                "missed_start_policy": "start_late",
+                "gator": {"enabled": True},
+            },
+            base_dir=self.base,
+        )
+        self.assertEqual(config.name, "bearing test 07")
+
+        with self.assertRaisesRegex(ConfigError, "name must be"):
+            session_config_from_mapping(
+                {"name": "../../bad", "gator": {"enabled": True}},
+                base_dir=self.base,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

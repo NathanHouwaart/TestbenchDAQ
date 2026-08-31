@@ -1,11 +1,13 @@
 {
   "_comment": "Copy to config.json. Enable at least one sensor before running.",
+  "name": null,
   "mode": "diagnostic",
   "output_root": "./csv-output",
   "run_count": 1,
   "run_duration_s": 30,
   "run_period_s": null,
   "missed_start_tolerance_s": 2.0,
+  "missed_start_policy": "start_late",
   "allow_partial": false,
   "gator": {
     "enabled": false,
@@ -23,8 +25,15 @@
     "serial": null,
     "model": null,
     "mount_path": null,
-    "ide_converter_path": "ideexport",
+    "ide_converter_path": null,
     "command_timeout_s": 30,
-    "remount_timeout_s": 60
+    "remount_timeout_s": 120,
+    "minimum_free_space_bytes": 1073741824,
+    "estimated_bytes_per_second": null,
+    "recording_time_limit_s": null,
+    "recording_size_limit_bytes": null,
+    "delete_after_verified_offload": false,
+    "_channels_comment": "Range is selected by channel on the S3; add only settings you want TestbenchDAQ to enforce.",
+    "channels": {}
   }
 }

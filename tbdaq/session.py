@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import secrets
 import threading
 import time
@@ -11,8 +12,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
-from tbdaq.adapters.endaq import EndaqAdapter
-from tbdaq.adapters.gator import GatorAdapter
 from tbdaq.config import SessionConfig
 from tbdaq.isa_export import SignalFile, write_signal_map
 
@@ -44,16 +43,18 @@ class Session:
         self._sleep = sleep
         self._input = input_fn
         self._interrupt_requested = False
-        self._session_id = session_id or _new_session_id()
+        self._session_id = session_id or _new_session_id(config.name)
         self._session_dir = Path(config.output_root) / self._session_id
         self._session_dir.mkdir(parents=True, exist_ok=False)
         self._manifest_path = self._session_dir / "session_manifest.json"
         self._export_map_path = self._session_dir / "signal_export_map.csv"
         self._log_handler = self._install_file_logging()
         self._adapters = dict(adapters) if adapters is not None else self._build_adapters()
+        self._deferred_processing: list[tuple[dict[str, Any], str, Any, Path]] = []
         self._manifest: dict[str, Any] = {
             "schema_version": 1,
             "application": "TestbenchDAQ",
+            "name": config.name,
             "session_id": self._session_id,
             "session_dir": str(self._session_dir),
             "mode": config.mode,
@@ -79,9 +80,16 @@ class Session:
     def _build_adapters(self) -> dict[str, Any]:
         adapters: dict[str, Any] = {}
         if self._config.gator.enabled:
+            from tbdaq.adapters.gator import GatorAdapter
+
             adapters["gator"] = GatorAdapter(self._config.gator)
         if self._config.endaq.enabled:
-            adapters["endaq"] = EndaqAdapter(self._config.endaq)
+            from tbdaq.adapters.endaq import EndaqAdapter
+
+            adapters["endaq"] = EndaqAdapter(
+                self._config.endaq,
+                run_duration_s=self._config.run_duration_s,
+            )
         return adapters
 
     def run(self) -> dict[str, Any]:
@@ -113,28 +121,33 @@ class Session:
                 planned_wall = base_wall + ((run_number - 1) * period)
                 self._wait_until(planned_monotonic)
                 lateness = max(0.0, self._monotonic() - planned_monotonic)
+                schedule_warning = None
                 if lateness > self._config.missed_start_tolerance_s:
                     reason = (
                         f"run_{run_number:02d} missed its planned start by "
                         f"{lateness:.3f}s (tolerance "
                         f"{self._config.missed_start_tolerance_s:.3f}s)."
                     )
-                    self._manifest["runs"].append(
-                        {
-                            "run_id": f"run_{run_number:02d}",
-                            "run_number": run_number,
-                            "status": "aborted",
-                            "planned_start_utc": _iso_utc(planned_wall),
-                            "lateness_s": round(lateness, 6),
-                            "errors": [reason],
-                        }
-                    )
-                    return self._finish("aborted", reason)
+                    if self._config.missed_start_policy == "abort":
+                        self._manifest["runs"].append(
+                            {
+                                "run_id": f"run_{run_number:02d}",
+                                "run_number": run_number,
+                                "status": "aborted",
+                                "planned_start_utc": _iso_utc(planned_wall),
+                                "lateness_s": round(lateness, 6),
+                                "errors": [reason],
+                            }
+                        )
+                        return self._finish("aborted", reason)
+                    schedule_warning = reason + " Starting late by policy."
+                    _LOG.warning(schedule_warning)
 
                 run_record = self._execute_run(
                     run_number=run_number,
                     planned_start_wall=planned_wall,
                     lateness=lateness,
+                    schedule_warning=schedule_warning,
                     active_adapters=active,
                 )
                 if unavailable and run_record["status"] == "success":
@@ -159,6 +172,7 @@ class Session:
                         f"{run_record['run_id']} was partial while allow_partial is false.",
                     )
 
+            self._process_deferred_runs()
             statuses = [run["status"] for run in self._manifest["runs"]]
             status = "success" if statuses and all(item == "success" for item in statuses) else "partial"
             return self._finish(status)
@@ -198,6 +212,7 @@ class Session:
         run_number: int,
         planned_start_wall: float,
         lateness: float,
+        schedule_warning: Optional[str],
         active_adapters: Mapping[str, Any],
     ) -> dict[str, Any]:
         run_id = f"run_{run_number:02d}"
@@ -219,8 +234,12 @@ class Session:
             },
             "adapters": {},
             "signals": [],
+            "processing_status": "pending",
+            "warnings": [],
             "errors": [],
         }
+        if schedule_warning:
+            record["warnings"].append(schedule_warning)
 
         start_calls = self._call_adapters_concurrently(
             active_adapters,
@@ -248,14 +267,20 @@ class Session:
 
         missing = [family for family in active_adapters if family not in started]
         if self._interrupt_requested:
-            stop_calls = self._stop_started(started, run_dir)
+            stop_calls = self._stop_started(
+                self._adapters_requiring_cleanup(started, active_adapters),
+                run_dir,
+            )
             self._record_stops(record, stop_calls)
             record["status"] = "interrupted"
             record["errors"].append("Interrupted while sensors were starting.")
             record["ended_at_utc"] = _iso_utc(self._clock())
             return record
         if missing and not self._config.allow_partial:
-            stop_calls = self._stop_started(started, run_dir)
+            stop_calls = self._stop_started(
+                self._adapters_requiring_cleanup(started, active_adapters),
+                run_dir,
+            )
             self._record_stops(record, stop_calls)
             record["status"] = "failed"
             record["errors"].append(
@@ -293,29 +318,18 @@ class Session:
             stop_calls = self._stop_started(started, run_dir)
             self._record_stops(record, stop_calls)
 
-        signal_results: list[SignalFile] = []
         processing_incomplete = False
         for family, adapter in started.items():
             adapter_record = record["adapters"][family]
+            if self._config.mode == "prognostic" and family == "endaq":
+                adapter_record["processing"] = {"status": "deferred"}
+                self._deferred_processing.append((record, family, adapter, run_dir))
+                continue
             try:
-                signals = adapter.export_run(run_dir)
-                signal_results.extend(signals)
-                failed = [signal for signal in signals if signal.status != "success"]
-                processing_status = "success" if signals and not failed else "failed"
-                if family == "endaq":
-                    conversion_status = getattr(adapter.result, "conversion_status", "unknown")
-                    if conversion_status != "success":
-                        processing_status = conversion_status
-                adapter_record["processing"] = {
-                    "status": processing_status,
-                    "successful_signals": sum(s.status == "success" for s in signals),
-                    "failed_signals": len(failed),
-                }
-                if processing_status != "success":
-                    processing_incomplete = True
-                    record["errors"].append(
-                        f"{family} processing status is {processing_status}."
-                    )
+                signals, complete = self._process_adapter(
+                    record, family, adapter, run_dir
+                )
+                processing_incomplete |= not complete
             except Exception as exc:
                 processing_incomplete = True
                 adapter_record["processing"] = {
@@ -324,15 +338,74 @@ class Session:
                     "failed_signals": 1,
                     "error": str(exc),
                 }
-                record["errors"].append(f"{family} processing failed: {exc}")
+                record["warnings"].append(f"{family} processing failed: {exc}")
 
-        record["signals"] = [_serialize_signal(signal) for signal in signal_results]
-        if signal_results:
+        stop_failed = any(
+            item.get("stop_call_error")
+            or item.get("stop") is None
+            or item.get("stop", {}).get("error")
+            for item in record["adapters"].values()
+            if "stop" in item
+        )
+        record["processing_status"] = (
+            "deferred" if self._config.mode == "prognostic" and "endaq" in started
+            else "incomplete" if processing_incomplete
+            else "success"
+        )
+        if interrupted or self._interrupt_requested:
+            record["status"] = "interrupted"
+        elif stop_failed:
+            record["status"] = "failed"
+        elif missing:
+            record["status"] = "partial"
+        else:
+            record["status"] = "success"
+        record["ended_at_utc"] = _iso_utc(self._clock())
+        return record
+
+    @staticmethod
+    def _adapters_requiring_cleanup(
+        started: Mapping[str, Any],
+        active_adapters: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        cleanup = dict(started)
+        for family, adapter in active_adapters.items():
+            if bool(getattr(adapter, "needs_stop", False)):
+                cleanup[family] = adapter
+        return cleanup
+
+    def _process_adapter(
+        self,
+        record: dict[str, Any],
+        family: str,
+        adapter: Any,
+        run_dir: Path,
+    ) -> tuple[list[SignalFile], bool]:
+        signals = adapter.export_run(run_dir)
+        failed = [signal for signal in signals if signal.status != "success"]
+        status = "success" if signals and not failed else "failed"
+        if family == "endaq":
+            status = getattr(adapter.result, "conversion_status", "unknown")
+        record["adapters"][family]["processing"] = {
+            "status": status,
+            "successful_signals": sum(s.status == "success" for s in signals),
+            "failed_signals": len(failed),
+        }
+        conversion_error = getattr(adapter.result, "conversion_error", None)
+        if conversion_error:
+            record["adapters"][family]["processing"]["error"] = conversion_error
+        complete = status == "success"
+        if not complete:
+            record["warnings"].append(
+                f"{family} processing status is {status}; raw acquisition is retained."
+            )
+        record["signals"].extend(_serialize_signal(signal) for signal in signals)
+        if signals:
             write_signal_map(
                 self._export_map_path,
                 [
                     {
-                        "run_id": run_id,
+                        "run_id": record["run_id"],
                         "device_family": _signal_family(signal),
                         "signal_alias": signal.alias,
                         "source_file": signal.source_file,
@@ -342,27 +415,31 @@ class Session:
                         "status": signal.status,
                         "error": signal.error or "",
                     }
-                    for signal in signal_results
+                    for signal in signals
                 ],
             )
+        return signals, complete
 
-        stop_failed = any(
-            item.get("stop_call_error")
-            or item.get("stop") is None
-            or item.get("stop", {}).get("error")
-            for item in record["adapters"].values()
-            if "stop" in item
-        )
-        if interrupted or self._interrupt_requested:
-            record["status"] = "interrupted"
-        elif stop_failed:
-            record["status"] = "failed"
-        elif missing or processing_incomplete:
-            record["status"] = "partial"
-        else:
-            record["status"] = "success"
-        record["ended_at_utc"] = _iso_utc(self._clock())
-        return record
+    def _process_deferred_runs(self) -> None:
+        for record, family, adapter, run_dir in self._deferred_processing:
+            try:
+                _signals, complete = self._process_adapter(
+                    record, family, adapter, run_dir
+                )
+                record["processing_status"] = "success" if complete else "incomplete"
+            except Exception as exc:
+                record["processing_status"] = "incomplete"
+                record["adapters"][family]["processing"] = {
+                    "status": "failed",
+                    "successful_signals": 0,
+                    "failed_signals": 1,
+                    "error": str(exc),
+                }
+                record["warnings"].append(
+                    f"{family} deferred processing failed: {exc}"
+                )
+            self._write_manifest()
+        self._deferred_processing.clear()
 
     def _call_adapters_concurrently(
         self,
@@ -479,9 +556,13 @@ class Session:
         self._log_handler = None
 
 
-def _new_session_id() -> str:
+def _new_session_id(name: Optional[str] = None) -> str:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-    return f"{timestamp}-{secrets.token_hex(2)}"
+    generated = f"{timestamp}-{secrets.token_hex(2)}"
+    if not name:
+        return generated
+    prefix = re.sub(r"[^A-Za-z0-9._-]+", "-", name.strip()).strip("-._")
+    return f"{prefix}__{generated}"
 
 
 def _iso_utc(epoch_s: float) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+import re
 from typing import Any, Mapping, Optional
 
 
@@ -24,6 +25,12 @@ class GatorConfig:
 
 
 @dataclass
+class EndaqChannelConfig:
+    enabled: Optional[bool] = None
+    sample_rate_hz: Optional[float] = None
+
+
+@dataclass
 class EndaqConfig:
     enabled: bool = False
     serial: Optional[str] = None
@@ -31,17 +38,25 @@ class EndaqConfig:
     mount_path: Optional[str] = None
     ide_converter_path: Optional[str] = None
     command_timeout_s: float = 30.0
-    remount_timeout_s: float = 60.0
+    remount_timeout_s: float = 120.0
+    minimum_free_space_bytes: int = 1_073_741_824
+    estimated_bytes_per_second: Optional[int] = None
+    recording_time_limit_s: Optional[int] = None
+    recording_size_limit_bytes: Optional[int] = None
+    delete_after_verified_offload: bool = False
+    channels: dict[int, EndaqChannelConfig] = field(default_factory=dict)
 
 
 @dataclass
 class SessionConfig:
+    name: Optional[str] = None
     mode: str = "diagnostic"
     output_root: str = "./csv-output"
     run_count: int = 1
     run_duration_s: Optional[float] = None
     run_period_s: Optional[float] = None
     missed_start_tolerance_s: float = 2.0
+    missed_start_policy: str = "start_late"
     allow_partial: bool = False
     gator: GatorConfig = field(default_factory=GatorConfig)
     endaq: EndaqConfig = field(default_factory=EndaqConfig)
@@ -56,6 +71,15 @@ class SessionConfig:
 
     def validate(self) -> None:
         self.mode = self.mode.strip().lower()
+        self.missed_start_policy = self.missed_start_policy.strip().lower()
+        if self.name is not None:
+            self.name = self.name.strip()
+            if not self.name:
+                self.name = None
+            elif len(self.name) > 80 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]*", self.name):
+                raise ConfigError(
+                    "name must be 1-80 characters using letters, numbers, spaces, '.', '_' or '-'."
+                )
         if self.mode not in {"diagnostic", "prognostic"}:
             raise ConfigError("mode must be 'diagnostic' or 'prognostic'.")
         if not self.output_root.strip():
@@ -68,14 +92,14 @@ class SessionConfig:
             raise ConfigError("run_period_s must be > 0 when provided.")
         if self.missed_start_tolerance_s < 0:
             raise ConfigError("missed_start_tolerance_s must be >= 0.")
+        if self.missed_start_policy not in {"abort", "start_late"}:
+            raise ConfigError("missed_start_policy must be 'abort' or 'start_late'.")
         if not self.enabled_families():
             raise ConfigError("Enable at least one sensor family.")
 
         if self.mode == "diagnostic":
             if self.run_count != 1:
                 raise ConfigError("diagnostic mode supports exactly one run.")
-            if self.run_period_s is not None:
-                raise ConfigError("diagnostic mode does not use run_period_s.")
         else:
             if self.run_duration_s is None:
                 raise ConfigError("prognostic mode requires run_duration_s.")
@@ -105,14 +129,38 @@ class SessionConfig:
                 raise ConfigError("endaq.command_timeout_s must be > 0.")
             if self.endaq.remount_timeout_s <= 0:
                 raise ConfigError("endaq.remount_timeout_s must be > 0.")
+            if self.endaq.minimum_free_space_bytes < 0:
+                raise ConfigError("endaq.minimum_free_space_bytes must be >= 0.")
+            if (
+                self.endaq.estimated_bytes_per_second is not None
+                and self.endaq.estimated_bytes_per_second <= 0
+            ):
+                raise ConfigError("endaq.estimated_bytes_per_second must be > 0.")
+            if (
+                self.endaq.recording_time_limit_s is not None
+                and self.endaq.recording_time_limit_s < 0
+            ):
+                raise ConfigError("endaq.recording_time_limit_s must be >= 0.")
+            if (
+                self.endaq.recording_size_limit_bytes is not None
+                and self.endaq.recording_size_limit_bytes < 0
+            ):
+                raise ConfigError("endaq.recording_size_limit_bytes must be >= 0.")
+            for channel_id, channel in self.endaq.channels.items():
+                if channel_id < 0:
+                    raise ConfigError("endaq channel IDs must be >= 0.")
+                if channel.sample_rate_hz is not None and channel.sample_rate_hz <= 0:
+                    raise ConfigError(
+                        f"endaq.channels.{channel_id}.sample_rate_hz must be > 0."
+                    )
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
 
 _SESSION_KEYS = {
-    "mode", "output_root", "run_count", "run_duration_s", "run_period_s",
-    "missed_start_tolerance_s", "allow_partial", "gator", "endaq",
+    "name", "mode", "output_root", "run_count", "run_duration_s", "run_period_s",
+    "missed_start_tolerance_s", "missed_start_policy", "allow_partial", "gator", "endaq",
 }
 _GATOR_KEYS = {
     "enabled", "binary_path", "library_path", "channel",
@@ -120,8 +168,11 @@ _GATOR_KEYS = {
 }
 _ENDAQ_KEYS = {
     "enabled", "serial", "model", "mount_path", "ide_converter_path",
-    "command_timeout_s", "remount_timeout_s",
+    "command_timeout_s", "remount_timeout_s", "minimum_free_space_bytes",
+    "estimated_bytes_per_second", "recording_time_limit_s",
+    "recording_size_limit_bytes", "delete_after_verified_offload", "channels",
 }
+_ENDAQ_CHANNEL_KEYS = {"enabled", "sample_rate_hz"}
 
 
 def _without_comments(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -158,7 +209,21 @@ def session_config_from_mapping(
 
     try:
         gator = GatorConfig(**gator_values)
-        endaq = EndaqConfig(**endaq_values)
+        raw_channels = endaq_values.pop("channels", {})
+        if not isinstance(raw_channels, Mapping):
+            raise ConfigError("endaq.channels must be a JSON object keyed by channel ID.")
+        channels: dict[int, EndaqChannelConfig] = {}
+        for raw_id, raw_settings in raw_channels.items():
+            try:
+                channel_id = int(raw_id)
+            except (TypeError, ValueError) as exc:
+                raise ConfigError(f"Invalid enDAQ channel ID: {raw_id!r}.") from exc
+            if not isinstance(raw_settings, Mapping):
+                raise ConfigError(f"endaq.channels.{raw_id} must be a JSON object.")
+            settings = _without_comments(raw_settings)
+            _reject_unknown(settings, _ENDAQ_CHANNEL_KEYS, f"endaq.channels.{raw_id}")
+            channels[channel_id] = EndaqChannelConfig(**settings)
+        endaq = EndaqConfig(**endaq_values, channels=channels)
         session_values = {key: value for key, value in clean.items() if key not in {"gator", "endaq"}}
         config = SessionConfig(**session_values, gator=gator, endaq=endaq)
     except TypeError as exc:
