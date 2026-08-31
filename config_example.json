@@ -1,0 +1,44 @@
+{
+  "_comment": "TestbenchDAQ configuration. Copy this file to config.json and adjust the paths.",
+  "_build_gator": "cd gator_recorder && cmake -B build -DGTR_API_DIR=/path/to/raspberry-pi4 . && cmake --build build",
+
+  "output_root": "./csv-output",
+
+  "_run_count_doc":     "Number of sequential runs to execute. Integer >= 1.",
+  "run_count": 1,
+
+  "_run_duration_s_doc": "Duration of each run in seconds. Float > 0, or null for manual stop (press Enter).",
+  "run_duration_s": 30,
+
+  "_run_period_s_doc":  "Start-to-start interval between runs in seconds. Must be >= run_duration_s. null = start next run immediately after the previous one finishes.",
+  "run_period_s": null,
+
+  "gator": {
+    "enabled": true,
+
+    "_binary_path_doc":  "Absolute or relative path to the compiled gator_recorder binary.",
+    "binary_path": "./gator_recorder/build/gator_recorder",
+
+    "_library_path_doc": "Directory containing libgtrlib-pub-shared-v*.so. Prepended to LD_LIBRARY_PATH at runtime.",
+    "library_path": "/home/wentelteef/Documents/public_gtr_api_v0.1.0/raspberry-pi4",
+
+    "_channel_doc":      "Switched Gator channel to sample. Integer 1-8.",
+    "channel": 8,
+
+    "_samplerate_doc":   "Sample rate in Hz. Allowed values: 1000 | 5000 | 10000 | 19000. null = keep device default (1000 Hz).",
+    "samplerate": 1000,
+
+    "_fullscale_doc":    "Full-scale input range. Integer 8-127 (unit: 5 nA steps, so 8 = 40 nA, 127 = 635 nA). Lower = more sensitive. null = keep device default (120).",
+    "fullscale": null,
+
+    "_threshold_doc":    "Detection threshold as a fraction of the full-scale reading. Float 0.0-1.0. Samples below this are reported as wavelength=0 (invalid). null = keep device default (0.2).",
+    "threshold": null
+  },
+
+  "endaq": {
+    "enabled": true,
+
+    "_ide2csv_path_doc": "Path to the ide2csv executable used to convert the raw .IDE recording to CSV after each run. null = skip conversion (the raw .IDE file is still offloaded).",
+    "ide2csv_path": null
+  }
+}
