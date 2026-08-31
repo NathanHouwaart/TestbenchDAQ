@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from tbdaq.config import EndaqConfig
-from tbdaq.isa_export import SignalFile, export_endaq_ide_signals
+from tbdaq.isa_export import ExportWindow, SignalFile, export_endaq_ide_signals
 
 _LOG = logging.getLogger(__name__)
 
@@ -87,7 +87,9 @@ class EndaqAdapter:
     def stop_run(self, run_dir: Path) -> EndaqRunResult:
         return self.stop(str(run_dir / "raw" / self.family))
 
-    def export_run(self, run_dir: Path) -> list[SignalFile]:
+    def export_run(
+        self, run_dir: Path, *, window: ExportWindow | None = None
+    ) -> list[SignalFile]:
         """Parse every verified IDE directly into final per-signal CSVs."""
         raw_dir = run_dir / "raw" / self.family
         ide_paths = sorted(raw_dir.glob("*.IDE")) + sorted(raw_dir.glob("*.ide"))
@@ -105,7 +107,7 @@ class EndaqAdapter:
                 if multi:
                     signal_dir /= ide_path.stem
                 _LOG.info("Exporting enDAQ signals directly from %s.", ide_path.name)
-                signals = export_endaq_ide_signals(ide_path, signal_dir)
+                signals = export_endaq_ide_signals(ide_path, signal_dir, window=window)
                 all_signals.extend(signals)
                 self._result.csv_paths.extend(
                     str(signal.path) for signal in signals if signal.status == "success"

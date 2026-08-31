@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from tbdaq.config import EndaqConfig, GatorConfig, SessionConfig
-from tbdaq.isa_export import SignalFile
+from tbdaq.isa_export import ExportWindow, SignalFile
 from tbdaq.session import Session
 
 
@@ -84,7 +84,10 @@ class FakeAdapter:
             self.result.error = self.stop_error
         return self.result
 
-    def export_run(self, run_dir: Path) -> list[SignalFile]:
+    def export_run(
+        self, run_dir: Path, *, window: ExportWindow | None = None
+    ) -> list[SignalFile]:
+        del window
         if self.export_delay_s and self.clock:
             self.clock.sleep(self.export_delay_s)
         if self.result.error:
@@ -142,6 +145,10 @@ class SessionTests(unittest.TestCase):
         ).run()
         self.assertEqual(manifest["status"], "success")
         self.assertEqual(manifest["runs"][0]["status"], "success")
+        synchronization = manifest["runs"][0]["synchronization"]
+        self.assertEqual(synchronization["method"], "common_window_only")
+        self.assertFalse(synchronization["sample_level_synchronized"])
+        self.assertFalse(synchronization["resampling"])
         self.assertEqual(
             manifest["runs"][0]["measurement_window"]["actual_duration_s"],
             3,
@@ -258,9 +265,11 @@ class SessionTests(unittest.TestCase):
         gator = FakeAdapter("gator")
         normal_export = gator.export_run
 
-        def delayed_export(run_dir: Path) -> list[SignalFile]:
+        def delayed_export(
+            run_dir: Path, *, window: ExportWindow | None = None
+        ) -> list[SignalFile]:
             self.clock.sleep(3)
-            return normal_export(run_dir)
+            return normal_export(run_dir, window=window)
 
         gator.export_run = delayed_export  # type: ignore[method-assign]
         config = SessionConfig(
@@ -287,9 +296,11 @@ class SessionTests(unittest.TestCase):
         gator = FakeAdapter("gator")
         normal_export = gator.export_run
 
-        def delayed_export(run_dir: Path) -> list[SignalFile]:
+        def delayed_export(
+            run_dir: Path, *, window: ExportWindow | None = None
+        ) -> list[SignalFile]:
             self.clock.sleep(3)
-            return normal_export(run_dir)
+            return normal_export(run_dir, window=window)
 
         gator.export_run = delayed_export  # type: ignore[method-assign]
         config = SessionConfig(
@@ -336,7 +347,10 @@ class SessionTests(unittest.TestCase):
     def test_endaq_conversion_failure_does_not_fail_raw_acquisition(self) -> None:
         endaq = FakeAdapter("endaq")
 
-        def failed_conversion(_run_dir: Path) -> list[SignalFile]:
+        def failed_conversion(
+            _run_dir: Path, *, window: ExportWindow | None = None
+        ) -> list[SignalFile]:
+            del window
             endaq.result.conversion_status = "failed"
             return []
 

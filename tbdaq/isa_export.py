@@ -21,6 +21,22 @@ class SignalFile:
     source_column: str    # column name inside the source file
     status: str           # "success" | "failed"
     error: Optional[str] = None
+    sample_count: Optional[int] = None
+    first_time_s: Optional[float] = None
+    last_time_s: Optional[float] = None
+    alignment_method: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ExportWindow:
+    """Host-defined interval retained in processed signal exports."""
+
+    start_utc_s: float
+    stop_utc_s: float
+
+    @property
+    def duration_s(self) -> float:
+        return max(0.0, self.stop_utc_s - self.start_utc_s)
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +54,8 @@ def export_gator_signals(
     gator_csv: Path,
     isa_dir: Path,
     gator_label: str = "gator",
+    *,
+    window: ExportWindow | None = None,
 ) -> list[SignalFile]:
     """Split a gator_channel.csv into one time,value CSV per sensor column.
 
@@ -68,7 +86,26 @@ def export_gator_signals(
                            source_column="", status="failed",
                            error=f"Column '{_GATOR_TIMESTAMP_COLUMN}' not found.")]
 
-    t0_us = int(rows[0][_GATOR_TIMESTAMP_COLUMN])
+    try:
+        t0_us = int(rows[0][_GATOR_TIMESTAMP_COLUMN])
+        timed_rows = [
+            ((int(row[_GATOR_TIMESTAMP_COLUMN]) - t0_us) / 1_000_000, row)
+            for row in rows
+        ]
+    except (KeyError, TypeError, ValueError) as exc:
+        return [SignalFile(alias=gator_label, path=isa_dir, source_file=source_rel,
+                           source_column="", status="failed",
+                           error=f"Invalid Gator timestamp: {exc}")]
+
+    if window is not None:
+        timed_rows = [item for item in timed_rows if 0.0 <= item[0] <= window.duration_s]
+    if not timed_rows:
+        return [SignalFile(alias=gator_label, path=isa_dir, source_file=source_rel,
+                           source_column="", status="failed",
+                           error="No Gator samples overlap the measurement window.")]
+
+    first_time_s = timed_rows[0][0]
+    last_time_s = timed_rows[-1][0]
 
     for col in _GATOR_SENSOR_COLUMNS:
         if col not in header:
@@ -81,8 +118,7 @@ def export_gator_signals(
             with out_path.open("w", newline="", encoding="utf-8") as fh:
                 writer = csv.writer(fh)
                 writer.writerow(["time_s", "value_fm"])
-                for row in rows:
-                    t_s = (int(row[_GATOR_TIMESTAMP_COLUMN]) - t0_us) / 1_000_000
+                for t_s, row in timed_rows:
                     writer.writerow([f"{t_s:.6f}", row[col]])
 
             results.append(SignalFile(
@@ -91,6 +127,10 @@ def export_gator_signals(
                 source_file=source_rel,
                 source_column=col,
                 status="success",
+                sample_count=len(timed_rows),
+                first_time_s=first_time_s,
+                last_time_s=last_time_s,
+                alignment_method="first_gator_sample_relative_window",
             ))
         except Exception as exc:
             results.append(SignalFile(
@@ -230,14 +270,16 @@ def export_endaq_ide_signals(
     signal_dir: Path,
     *,
     chunk_size: int = 65_536,
+    window: ExportWindow | None = None,
 ) -> list[SignalFile]:
     """Parse one IDE once and write final per-signal CSVs directly.
 
     This avoids the former IDE -> combined channel CSV -> per-signal CSV
     pipeline, which formatted and read the same high-rate data twice. Final
     CSV formatting is chunked to avoid another full-size array allocation.
-    Output remains run-relative seconds, with t=0 at each channel's first
-    sample, matching the existing interim signal format.
+    With a window, all channels use the same host UTC measurement start as
+    t=0 and samples outside that interval are discarded. Without a window,
+    the legacy per-channel first-sample origin is retained.
     """
     try:
         import numpy as np
@@ -269,6 +311,15 @@ def export_endaq_ide_signals(
             loaded_ids.update((20, 36))
         importer.readData(document, channels=sorted(loaded_ids))
 
+        session_start_utc_s: float | None = None
+        if window is not None:
+            sessions = getattr(document, "sessions", None)
+            if not sessions:
+                raise RuntimeError("IDE has no session timestamp for window alignment.")
+            session_start_utc_s = float(sessions[0].utcStartTime)
+            window_start_us = (window.start_utc_s - session_start_utc_s) * 1_000_000.0
+            window_stop_us = (window.stop_utc_s - session_start_utc_s) * 1_000_000.0
+
         for channel_id in channel_ids:
             channel = document.channels.get(channel_id)
             if channel is None:
@@ -299,11 +350,24 @@ def export_endaq_ide_signals(
                             source_file=str(ide_path),
                             source_column=subchannel.name,
                             status="success",
+                            sample_count=0,
+                            alignment_method=(
+                                "ide_utc_to_host_measurement_window"
+                                if window is not None
+                                else "first_channel_sample_relative"
+                            ),
                         ))
 
                     for start in range(0, len(events), chunk_size):
                         values = events.arraySlice(start, min(start + chunk_size, len(events)))
-                        relative_s = (values[0] - first_time_us) / 1_000_000.0
+                        if window is not None:
+                            mask = (values[0] >= window_start_us) & (values[0] <= window_stop_us)
+                            values = values[:, mask]
+                            if values.shape[1] == 0:
+                                continue
+                            relative_s = (values[0] - window_start_us) / 1_000_000.0
+                        else:
+                            relative_s = (values[0] - first_time_us) / 1_000_000.0
                         for index, handle in enumerate(handles, start=1):
                             np.savetxt(
                                 handle,
@@ -311,6 +375,16 @@ def export_endaq_ide_signals(
                                 delimiter=",",
                                 fmt=("%.6f", "%.9g"),
                             )
+                        for result in channel_results:
+                            result.sample_count = (result.sample_count or 0) + len(relative_s)
+                            if result.first_time_s is None:
+                                result.first_time_s = float(relative_s[0])
+                            result.last_time_s = float(relative_s[-1])
+                if window is not None:
+                    for result in channel_results:
+                        if result.sample_count == 0:
+                            result.status = "failed"
+                            result.error = "No samples overlap the measurement window."
                 results.extend(channel_results)
             except Exception as exc:
                 results.extend(
@@ -346,7 +420,8 @@ def export_endaq_ide_signals(
 _EXPORT_MAP_COLUMNS = [
     "run_id", "device_family", "signal_alias",
     "source_file", "source_column", "signal_path",
-    "time_unit", "status", "error",
+    "time_unit", "sample_count", "first_time_s", "last_time_s",
+    "alignment_method", "status", "error",
 ]
 
 

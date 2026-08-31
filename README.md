@@ -362,8 +362,10 @@ python -m compileall -q tbdaq tests
 ## Current limitations
 
 - Gator selection still uses the first device returned by the native library.
-- Cross-device sample timestamps are not yet normalized to one shared
-  reference.
+- Processed signals are cropped to the common measurement window, but this is
+  not sample-level synchronization. enDAQ channels share the host-window time
+  origin; Gator uses its first retained sample because its device UTC offset is
+  not currently trusted. No resampling or clock-drift correction is applied.
 - Full interrupted-session offload/conversion recovery is not implemented.
 - Multi-day recorder-space reclamation requires explicitly enabling verified
   recorder-side deletion.

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
 from tbdaq.config import SessionConfig
-from tbdaq.isa_export import SignalFile, write_signal_map
+from tbdaq.isa_export import ExportWindow, SignalFile, write_signal_map
 
 _LOG = logging.getLogger(__name__)
 
@@ -50,7 +50,9 @@ class Session:
         self._export_map_path = self._session_dir / "signal_export_map.csv"
         self._log_handler = self._install_file_logging()
         self._adapters = dict(adapters) if adapters is not None else self._build_adapters()
-        self._deferred_processing: list[tuple[dict[str, Any], str, Any, Path]] = []
+        self._deferred_processing: list[
+            tuple[dict[str, Any], str, Any, Path, ExportWindow]
+        ] = []
         self._manifest: dict[str, Any] = {
             "schema_version": 1,
             "application": "TestbenchDAQ",
@@ -72,7 +74,7 @@ class Session:
             },
             "limitations": [
                 "Signal CSV output is an interim format, not a complete ISA-PHM serialization.",
-                "Cross-device timestamp normalization is deferred to the synchronization phase.",
+                "Exports share a measurement window but are not sample-level synchronized.",
             ],
         }
         self._write_manifest()
@@ -325,16 +327,50 @@ class Session:
             stop_calls = self._stop_started(started, run_dir)
             self._record_stops(record, stop_calls)
 
+        export_stop_wall = stop_request_wall
+        if self._config.run_duration_s is not None:
+            export_stop_wall = min(
+                export_stop_wall,
+                measurement_start_wall + self._config.run_duration_s,
+            )
+        export_window = ExportWindow(measurement_start_wall, export_stop_wall)
+        record["synchronization"] = {
+            "method": "common_window_only",
+            "drift_correction": False,
+            "resampling": False,
+            "sample_level_synchronized": False,
+            "window_start_utc": record["measurement_window"]["start_utc"],
+            "window_stop_utc": _iso_utc(export_window.stop_utc_s),
+            "device_time_origins": {
+                "gator": "first retained Gator sample (device UTC offset not trusted)",
+                "endaq": "IDE session UTC mapped to host measurement-window start",
+            } if set(started) == {"gator", "endaq"} else {
+                family: (
+                    "first retained Gator sample (device UTC offset not trusted)"
+                    if family == "gator"
+                    else "IDE session UTC mapped to host measurement-window start"
+                )
+                for family in started
+            },
+            "limitations": [
+                "Native sample rates are preserved; timestamps are not resampled.",
+                "No clock-drift or phase correction is applied.",
+                "Gator device UTC is not used for absolute alignment because its observed offset from host UTC is not trusted.",
+            ],
+        }
+
         processing_incomplete = False
         for family, adapter in started.items():
             adapter_record = record["adapters"][family]
             if self._config.mode == "prognostic" and family == "endaq":
                 adapter_record["processing"] = {"status": "deferred"}
-                self._deferred_processing.append((record, family, adapter, run_dir))
+                self._deferred_processing.append(
+                    (record, family, adapter, run_dir, export_window)
+                )
                 continue
             try:
                 signals, complete = self._process_adapter(
-                    record, family, adapter, run_dir
+                    record, family, adapter, run_dir, export_window
                 )
                 processing_incomplete |= not complete
             except Exception as exc:
@@ -387,8 +423,9 @@ class Session:
         family: str,
         adapter: Any,
         run_dir: Path,
+        window: ExportWindow,
     ) -> tuple[list[SignalFile], bool]:
-        signals = adapter.export_run(run_dir)
+        signals = adapter.export_run(run_dir, window=window)
         failed = [signal for signal in signals if signal.status != "success"]
         status = "success" if signals and not failed else "failed"
         if family == "endaq":
@@ -419,6 +456,10 @@ class Session:
                         "source_column": signal.source_column,
                         "signal_path": str(signal.path),
                         "time_unit": "s",
+                        "sample_count": signal.sample_count,
+                        "first_time_s": signal.first_time_s,
+                        "last_time_s": signal.last_time_s,
+                        "alignment_method": signal.alignment_method or "",
                         "status": signal.status,
                         "error": signal.error or "",
                     }
@@ -428,10 +469,10 @@ class Session:
         return signals, complete
 
     def _process_deferred_runs(self) -> None:
-        for record, family, adapter, run_dir in self._deferred_processing:
+        for record, family, adapter, run_dir, window in self._deferred_processing:
             try:
                 _signals, complete = self._process_adapter(
-                    record, family, adapter, run_dir
+                    record, family, adapter, run_dir, window
                 )
                 record["processing_status"] = "success" if complete else "incomplete"
             except Exception as exc:
@@ -604,6 +645,10 @@ def _serialize_signal(signal: SignalFile) -> dict[str, Any]:
         "source_column": signal.source_column,
         "status": signal.status,
         "error": signal.error,
+        "sample_count": signal.sample_count,
+        "first_time_s": signal.first_time_s,
+        "last_time_s": signal.last_time_s,
+        "alignment_method": signal.alignment_method,
     }
 
 

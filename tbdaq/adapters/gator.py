@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Optional
 
 from tbdaq.config import GatorConfig
-from tbdaq.isa_export import SignalFile, export_gator_signals
+from tbdaq.isa_export import ExportWindow, SignalFile, export_gator_signals
 
 _START_UTC_RE = re.compile(r"START_UTC_US=(\d+)")
 
@@ -70,11 +70,15 @@ class GatorAdapter:
         del run_dir
         return self.stop()
 
-    def export_run(self, run_dir: Path) -> list[SignalFile]:
+    def export_run(
+        self, run_dir: Path, *, window: ExportWindow | None = None
+    ) -> list[SignalFile]:
         source = Path(self._result.output_path)
         if not self._result.ok or not source.is_file():
             return []
-        return export_gator_signals(source, run_dir / "signals" / self.family)
+        return export_gator_signals(
+            source, run_dir / "signals" / self.family, window=window
+        )
 
     def start(self, output_path: str) -> GatorRunResult:
         """Start the C++ binary and wait for it to print START_UTC_US."""

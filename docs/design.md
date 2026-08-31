@@ -91,9 +91,13 @@ Phase 1 records host UTC for:
 - stop request;
 - adapter stop-call return.
 
-These values describe orchestration and are not claimed to be device sample
-timestamps. Sample-level clock normalization is a separate synchronization
-phase.
+These values describe orchestration and are not claimed to prove sample-level
+synchronization. Processed enDAQ channels are cropped against this host window
+and share its start as `t=0`. Gator output is duration-cropped and uses its first
+retained sample as `t=0`, because its observed device UTC offset is not trusted.
+Native sample rates are preserved and no resampling, phase correction, or clock
+drift correction is applied. Every run records this as
+`synchronization.method = "common_window_only"` in the manifest.
 
 ## Exit statuses
 
