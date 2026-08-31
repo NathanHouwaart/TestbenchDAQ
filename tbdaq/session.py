@@ -511,13 +511,20 @@ class Session:
             adapter_record["stop"] = _serialize_result(result)
             adapter_record["stop_call_error"] = call["error"]
             if call["error"]:
-                record["errors"].append(f"{family} stop call failed: {call['error']}")
+                message = f"{family} stop call failed: {call['error']}"
+                record["errors"].append(message)
+                _LOG.error(message)
             elif result is None:
-                record["errors"].append(f"{family} stop call returned no result.")
+                message = f"{family} stop call returned no result."
+                record["errors"].append(message)
+                _LOG.error(message)
             elif not bool(getattr(result, "ok", False)):
-                record["errors"].append(
-                    f"{family} stop failed: {getattr(result, 'error', 'unknown error')}"
+                message = (
+                    f"{family} stop failed: "
+                    f"{getattr(result, 'error', 'unknown error')}"
                 )
+                record["errors"].append(message)
+                _LOG.error(message)
 
     def _wait_until(self, target_monotonic: float) -> None:
         while True:

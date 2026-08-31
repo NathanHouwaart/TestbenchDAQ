@@ -308,6 +308,9 @@ TBDAQ_CONFIG=/path/to/test.json ./scripts/run_soak.sh
 
 Normal output shows lifecycle milestones. Use `-q` for warnings/errors only,
 `-qq` for errors only, or `-v` for debug output including native Gator logs.
+On an interactive terminal, warnings are yellow and errors are red. A failed
+session prints its concrete run/adapter errors after the summary; ANSI colors
+are automatically omitted for redirected output or when `NO_COLOR` is set.
 
 ## Development
 

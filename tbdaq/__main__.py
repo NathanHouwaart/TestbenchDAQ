@@ -4,12 +4,53 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import re
 import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
 from tbdaq.config import ConfigError, SessionConfig, session_config_from_mapping
+
+
+_ANSI_RED = "\033[31m"
+_ANSI_YELLOW = "\033[33m"
+_ANSI_RESET = "\033[0m"
+
+
+def _terminal_supports_color(stream: Any) -> bool:
+    return (
+        hasattr(stream, "isatty")
+        and stream.isatty()
+        and "NO_COLOR" not in os.environ
+        and os.environ.get("TERM", "") != "dumb"
+    )
+
+
+def _colored(text: str, color: str, stream: Any) -> str:
+    if not _terminal_supports_color(stream):
+        return text
+    return f"{color}{text}{_ANSI_RESET}"
+
+
+class _ConsoleFormatter(logging.Formatter):
+    def __init__(self, *, use_color: bool) -> None:
+        super().__init__(
+            "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        self._use_color = use_color
+
+    def format(self, record: logging.LogRecord) -> str:
+        rendered = super().format(record)
+        if not self._use_color:
+            return rendered
+        if record.levelno >= logging.ERROR:
+            return f"{_ANSI_RED}{rendered}{_ANSI_RESET}"
+        if record.levelno >= logging.WARNING:
+            return f"{_ANSI_YELLOW}{rendered}{_ANSI_RESET}"
+        return rendered
 
 
 def _setup_console_logging(verbose: int, quiet: int) -> None:
@@ -21,11 +62,34 @@ def _setup_console_logging(verbose: int, quiet: int) -> None:
         level = logging.WARNING
     else:
         level = logging.INFO
-    logging.basicConfig(
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        level=level,
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        _ConsoleFormatter(use_color=_terminal_supports_color(sys.stderr))
     )
+    logging.basicConfig(level=level, handlers=[handler], force=True)
+
+
+def _manifest_messages(manifest: dict[str, Any]) -> tuple[list[str], list[str]]:
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    def add_unique(target: list[str], value: Any) -> None:
+        if isinstance(value, str) and value and value not in target:
+            target.append(value)
+
+    for run in manifest.get("runs", []):
+        for value in run.get("errors", []):
+            add_unique(errors, value)
+        for value in run.get("warnings", []):
+            add_unique(warnings, value)
+    abort_reason = manifest.get("abort_reason")
+    generic_run_failure = (
+        isinstance(abort_reason, str)
+        and re.fullmatch(r"run_\d+ ended with status \w+\.", abort_reason) is not None
+    )
+    if not errors or not generic_run_failure:
+        add_unique(errors, abort_reason)
+    return errors, warnings
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -210,7 +274,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config = _build_config(args)
     except ConfigError as exc:
-        print(f"Configuration error: {exc}", file=sys.stderr)
+        print(
+            _colored(f"Configuration error: {exc}", _ANSI_RED, sys.stderr),
+            file=sys.stderr,
+        )
         return 2
 
     try:
@@ -235,16 +302,34 @@ def main(argv: list[str] | None = None) -> int:
 
         manifest = Session(config).run()
     except KeyboardInterrupt:
-        print("Interrupted.", file=sys.stderr)
+        print(_colored("Interrupted.", _ANSI_YELLOW, sys.stderr), file=sys.stderr)
         return 130
     except Exception as exc:
         logging.getLogger(__name__).exception("Unhandled session failure")
-        print(f"Session failed: {exc}", file=sys.stderr)
+        print(
+            _colored(f"Session failed: {exc}", _ANSI_RED, sys.stderr),
+            file=sys.stderr,
+        )
         return 1
 
+    errors, warnings = _manifest_messages(manifest)
     print(f"Session ID: {manifest['session_id']}")
-    print(f"Session status: {manifest['status']}")
+    status_line = f"Session status: {manifest['status']}"
+    if manifest["status"] in {"failed", "aborted"}:
+        status_line = _colored(status_line, _ANSI_RED, sys.stdout)
+    elif manifest["status"] in {"partial", "interrupted"}:
+        status_line = _colored(status_line, _ANSI_YELLOW, sys.stdout)
+    print(status_line)
     print(f"Output: {manifest['session_dir']}")
+    sys.stdout.flush()
+    if warnings:
+        print(_colored("Warnings:", _ANSI_YELLOW, sys.stderr), file=sys.stderr)
+        for warning in warnings:
+            print(_colored(f"  - {warning}", _ANSI_YELLOW, sys.stderr), file=sys.stderr)
+    if errors:
+        print(_colored("Failure reason(s):", _ANSI_RED, sys.stderr), file=sys.stderr)
+        for error in errors:
+            print(_colored(f"  - {error}", _ANSI_RED, sys.stderr), file=sys.stderr)
     return 0 if manifest["status"] == "success" else 1
 
 

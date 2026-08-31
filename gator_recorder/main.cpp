@@ -152,12 +152,21 @@ class ChannelRecorder {
 
   void waitUntilFinished()
   {
-    auto timeout = _captureDurationUs > 0
-        ? std::chrono::microseconds(_captureDurationUs) + std::chrono::seconds(5)
-        : std::chrono::hours(24 * 365);
     std::unique_lock<std::mutex> lock(_mutex);
-    _done.wait_for(lock, timeout,
-        [this] { return _finished.load() || g_stopRequested.load(); });
+    if (_captureDurationUs > 0) {
+      auto timeout = std::chrono::microseconds(_captureDurationUs)
+          + std::chrono::seconds(5);
+      _done.wait_for(lock, timeout,
+          [this] { return _finished.load() || g_stopRequested.load(); });
+    } else {
+      // A signal handler may safely set the atomic flag, but it may not safely
+      // notify a condition_variable. Poll at a short interval so SIGTERM always
+      // releases a manual-duration recording instead of relying on a spurious
+      // wake-up from what used to be a year-long wait.
+      while (!_finished.load() && !g_stopRequested.load()) {
+        _done.wait_for(lock, std::chrono::milliseconds(100));
+      }
+    }
     _finished.store(true);
   }
 
