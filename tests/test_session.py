@@ -281,6 +281,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(manifest["status"], "aborted")
         self.assertEqual(manifest["runs"][1]["status"], "aborted")
         self.assertIn("missed its planned start", manifest["abort_reason"])
+        self.assertIn("ABORTING SESSION", manifest["abort_reason"])
 
     def test_start_late_policy_continues_after_cleanup_overrun(self) -> None:
         gator = FakeAdapter("gator")

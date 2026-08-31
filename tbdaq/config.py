@@ -56,7 +56,7 @@ class SessionConfig:
     run_duration_s: Optional[float] = None
     run_period_s: Optional[float] = None
     missed_start_tolerance_s: float = 2.0
-    missed_start_policy: str = "start_late"
+    missed_start_policy: str = "abort"
     allow_partial: bool = False
     gator: GatorConfig = field(default_factory=GatorConfig)
     endaq: EndaqConfig = field(default_factory=EndaqConfig)

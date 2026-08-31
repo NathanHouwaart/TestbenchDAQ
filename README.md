@@ -153,8 +153,9 @@ tbdaq --config config.json \
 ```
 
 If enDAQ cleanup overruns a planned start, `missed_start_policy` controls the
-result. The default, `start_late`, starts immediately and records a warning and
-exact lateness. Set it to `abort` for a strict fixed schedule.
+result. The default, `abort`, stops the session with a prominent schedule-
+violation error. Set it to `start_late` only when deliberately accepting a
+shifted schedule; the exact lateness is then recorded as a warning.
 
 Every prognostic run stops the enDAQ, waits for remount, copies and verifies
 its IDE, and only then permits the next scheduled run. IDE signal export is

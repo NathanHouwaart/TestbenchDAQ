@@ -7,7 +7,7 @@
   "run_duration_s": 30,
   "run_period_s": null,
   "missed_start_tolerance_s": 2.0,
-  "missed_start_policy": "start_late",
+  "missed_start_policy": "abort",
   "allow_partial": false,
   "gator": {
     "enabled": false,

@@ -129,6 +129,13 @@ class Session:
                         f"{self._config.missed_start_tolerance_s:.3f}s)."
                     )
                     if self._config.missed_start_policy == "abort":
+                        abort_message = (
+                            "PROGNOSTIC SCHEDULE VIOLATION — ABORTING SESSION: "
+                            f"{reason} Increase run_period_s to leave enough time for "
+                            "enDAQ stop/remount/offload, or explicitly set "
+                            "missed_start_policy to 'start_late'."
+                        )
+                        _LOG.error(abort_message)
                         self._manifest["runs"].append(
                             {
                                 "run_id": f"run_{run_number:02d}",
@@ -136,10 +143,10 @@ class Session:
                                 "status": "aborted",
                                 "planned_start_utc": _iso_utc(planned_wall),
                                 "lateness_s": round(lateness, 6),
-                                "errors": [reason],
+                                "errors": [abort_message],
                             }
                         )
-                        return self._finish("aborted", reason)
+                        return self._finish("aborted", abort_message)
                     schedule_warning = reason + " Starting late by policy."
                     _LOG.warning(schedule_warning)
 

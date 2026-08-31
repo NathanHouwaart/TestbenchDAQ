@@ -8,6 +8,17 @@ from tbdaq.config import ConfigError, session_config_from_mapping
 
 
 class ConfigTests(unittest.TestCase):
+    def test_missed_start_policy_defaults_to_abort(self) -> None:
+        config = session_config_from_mapping(
+            {
+                "mode": "diagnostic",
+                "run_duration_s": 1,
+                "gator": {"enabled": True},
+            },
+            base_dir=self.base,
+        )
+        self.assertEqual(config.missed_start_policy, "abort")
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.base = Path(self.temp_dir.name)
