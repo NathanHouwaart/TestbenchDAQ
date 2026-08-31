@@ -291,6 +291,11 @@ million formatted text values.
 Gator output always contains all eight `gator_sensor_N_fm.csv` files. An
 all-zero sensor is preserved rather than silently omitted.
 
+The bundled native recorder works around an intermittent GTRLib v0.1.0
+shutdown hang. After explicitly closing the CSV and flushing its completion
+message, it exits without running the vendor library's destructors because the
+API exposes no unsubscribe/disconnect operation.
+
 ## Output
 
 Each session uses a collision-resistant UTC identifier:

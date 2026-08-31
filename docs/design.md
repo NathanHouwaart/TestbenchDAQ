@@ -72,6 +72,15 @@ The standalone `endaq-stop` action is intentionally limited to stopping and
 remounting an already-recording configured device. It is not a general session
 recovery mechanism.
 
+## Gator lifecycle
+
+GTRLib v0.1.0 provides asynchronous `subscribe()` but no matching unsubscribe
+or disconnect operation. Its teardown can intermittently block after capture
+and CSV flushing have completed. The native recorder therefore explicitly
+closes the CSV, flushes its completion token, and exits without invoking the
+vendor-owned destructors. Process termination releases the remaining USB
+handles.
+
 ## Time terminology
 
 Phase 1 records host UTC for:

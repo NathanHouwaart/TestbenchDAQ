@@ -314,5 +314,12 @@ int main(int argc, char* argv[])
   catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 6; }
 
   std::cout << "Wrote " << recorder.sampleCount() << " samples to " << cfg.outputPath << '\n';
-  return 0;
+  std::cout.flush();
+
+  // GTRLib v0.1.0 exposes subscribe() but no unsubscribe/disconnect operation.
+  // Its object teardown can occasionally block after capture has completed.
+  // The CSV writer is explicitly closed and stdout explicitly flushed above,
+  // so terminate without invoking the vendor-owned destructors. The OS closes
+  // the remaining USB handles when the process exits.
+  std::_Exit(0);
 }
