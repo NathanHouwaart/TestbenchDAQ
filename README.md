@@ -49,6 +49,30 @@ sudo udevadm trigger
 The user running TestbenchDAQ must belong to `plugdev`. Log out and back in
 after changing group membership.
 
+The enDAQ must be cleanly unmounted before it switches from USB storage to
+recording mode. The setup helper backs up `/etc/fstab` and the old udev rule,
+installs the deterministic configuration, and performs a read-only FAT check:
+
+```bash
+./scripts/install_endaq_mount_setup.sh
+```
+
+It prompts for `sudo`. If the FAT check reports an error, it leaves the device
+unmounted and does not alter the filesystem; review the result before repair.
+
+The installed `/etc/fstab` entry matches `system/endaq-fstab.txt`. It
+deliberately uses `noauto` (not
+`x-systemd.automount`) because the udev rule starts the generated mount unit,
+and `users` lets TestbenchDAQ unmount it cleanly before `RecStart`:
+
+```text
+UUID=6430-3964 /mnt/endaq vfat noauto,nofail,users,uid=1000,gid=1000,utf8,umask=022 0 0
+```
+
+Do not combine this with the old `systemd-run --on-active=2` rule. Transient
+systemd timers have a one-minute accuracy window by default, which made enDAQ
+mount latency vary by tens of seconds.
+
 Verify the command:
 
 ```bash
@@ -162,6 +186,10 @@ its IDE, and only then permits the next scheduled run. IDE signal export is
 deferred until all scheduled acquisitions finish, so processing cannot delay a
 later start. Remount/offload time is scheduling overhead in addition to
 `run_duration_s`; exact lateness is retained in the manifest.
+
+Before `RecStart`, TestbenchDAQ flushes pending writes and cleanly unmounts the
+enDAQ filesystem. The manifest records separate durations for clean unmount,
+start command, USB disconnect, stop command, remount, and offload/verification.
 
 ### Common measurement window
 

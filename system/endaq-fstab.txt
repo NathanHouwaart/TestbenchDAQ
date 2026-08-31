@@ -1,0 +1,3 @@
+# Replace the existing UUID=6430-3964 line in /etc/fstab with this line.
+# "users" permits TestbenchDAQ to cleanly unmount before RecStart.
+UUID=6430-3964 /mnt/endaq vfat noauto,nofail,users,uid=1000,gid=1000,utf8,umask=022 0 0

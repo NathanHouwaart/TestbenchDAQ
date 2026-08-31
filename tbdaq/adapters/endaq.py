@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import shutil
+import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -45,6 +46,7 @@ class EndaqRunResult:
     conversion_status: str = "not_started"
     conversion_error: Optional[str] = None
     error: Optional[str] = None
+    phase_timings_s: dict[str, float] = field(default_factory=dict)
 
     @property
     def ok(self) -> bool:
@@ -196,25 +198,37 @@ class EndaqAdapter:
             self._refresh_mounted_device()
             self._check_storage_capacity()
             self._files_before_start = set(self._list_ide_files())
+            unmount_started = time.monotonic()
+            block_device = self._clean_unmount()
+            self._result.phase_timings_s["clean_unmount"] = round(
+                time.monotonic() - unmount_started, 6
+            )
             self._result.start_utc_us = _now_utc_us()
             self._needs_stop = True
+            command_started = time.monotonic()
             acknowledged = self._device.command.startRecording(
                 wait=False,
                 timeout=self._config.command_timeout_s,
             )
+            self._result.phase_timings_s["start_command"] = round(
+                time.monotonic() - command_started, 6
+            )
             self._result.start_library_acknowledged = bool(acknowledged)
 
-            # The serial implementation can compare a stale status response
-            # after it has sent RecStart. Dismount is authoritative proof.
-            dismounted = self._device.command.awaitReboot(
-                timeout=self._config.command_timeout_s,
-                timeoutMsg="Timed out waiting for enDAQ recording to start",
+            # The filesystem was deliberately unmounted before RecStart, so
+            # the library's path-based awaitReboot() would return immediately.
+            # The USB block device disappearing is authoritative proof that
+            # the recorder accepted RecStart and switched modes.
+            disconnect_started = time.monotonic()
+            self._await_block_disconnect(block_device)
+            self._result.phase_timings_s["start_usb_disconnect"] = round(
+                time.monotonic() - disconnect_started, 6
             )
-            if not dismounted:
-                raise RuntimeError("enDAQ storage did not dismount after RecStart.")
             _LOG.info(
-                "enDAQ recording started (library acknowledgement=%s).",
+                "enDAQ recording started after clean unmount "
+                "(library acknowledgement=%s; phases=%s).",
                 acknowledged,
+                self._result.phase_timings_s,
             )
         except Exception as exc:
             self._result.error = f"enDAQ start failed: {exc}"
@@ -227,11 +241,32 @@ class EndaqAdapter:
             return self._result
 
         try:
+            stop_command_started = time.monotonic()
             self._send_stop_with_retry()
+            self._result.phase_timings_s["stop_command"] = round(
+                time.monotonic() - stop_command_started, 6
+            )
+            remount_started = time.monotonic()
             self._await_mounted_device()
+            self._result.phase_timings_s["remount"] = round(
+                time.monotonic() - remount_started, 6
+            )
             self._needs_stop = False
-            _LOG.info("enDAQ recording stopped and storage remounted.")
+            _LOG.info(
+                "enDAQ recording stopped and storage remounted "
+                "(stop command %.3fs, remount %.3fs).",
+                self._result.phase_timings_s["stop_command"],
+                self._result.phase_timings_s["remount"],
+            )
+            offload_started = time.monotonic()
             self._offload(raw_output_dir)
+            self._result.phase_timings_s["offload_and_verify"] = round(
+                time.monotonic() - offload_started, 6
+            )
+            _LOG.info(
+                "enDAQ offload and verification completed in %.3fs.",
+                self._result.phase_timings_s["offload_and_verify"],
+            )
         except Exception as exc:
             self._result.error = f"enDAQ stop/offload failed: {exc}"
         return self._result
@@ -337,6 +372,67 @@ class EndaqAdapter:
                 f"Expected one mounted enDAQ before start, found {len(devices)}."
             )
         self._attach(devices[0])
+
+    def _clean_unmount(self) -> str:
+        """Flush and unmount recorder storage before RecStart USB disconnect."""
+        if not self._mount_path:
+            raise RuntimeError("enDAQ mount path is unknown.")
+
+        try:
+            found = subprocess.run(
+                [
+                    "findmnt", "--noheadings", "--raw", "--output", "SOURCE,FSTYPE",
+                    "--target", self._mount_path,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=self._config.command_timeout_s,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"Could not inspect enDAQ mount: {exc}") from exc
+        mounts = [
+            line.split()
+            for line in found.stdout.splitlines()
+            if len(line.split()) >= 2 and line.split()[1] != "autofs"
+        ]
+        if found.returncode != 0 or len(mounts) != 1:
+            detail = found.stderr.strip() or found.stdout.strip() or "not mounted"
+            raise RuntimeError(f"Expected one mounted enDAQ filesystem: {detail}")
+        block_device = os.path.realpath(mounts[0][0])
+        if not block_device.startswith("/dev/"):
+            raise RuntimeError(f"Unexpected enDAQ mount source: {mounts[0][0]}")
+
+        os.sync()
+        try:
+            unmounted = subprocess.run(
+                ["umount", self._mount_path],
+                capture_output=True,
+                text=True,
+                timeout=self._config.command_timeout_s,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"Could not cleanly unmount enDAQ: {exc}") from exc
+        if unmounted.returncode != 0:
+            detail = unmounted.stderr.strip() or unmounted.stdout.strip()
+            raise RuntimeError(
+                f"Could not cleanly unmount enDAQ at {self._mount_path}: {detail}. "
+                "Install the documented fstab 'users' option."
+            )
+        _LOG.info("Cleanly unmounted enDAQ storage at %s.", self._mount_path)
+        return block_device
+
+    def _await_block_disconnect(self, block_device: str) -> None:
+        deadline = time.monotonic() + self._config.command_timeout_s
+        while time.monotonic() < deadline:
+            if not os.path.exists(block_device):
+                return
+            time.sleep(0.1)
+        raise TimeoutError(
+            f"enDAQ USB block device {block_device} did not disconnect within "
+            f"{self._config.command_timeout_s:g}s after RecStart."
+        )
 
     def _await_mounted_device(self) -> None:
         deadline = time.monotonic() + self._config.remount_timeout_s

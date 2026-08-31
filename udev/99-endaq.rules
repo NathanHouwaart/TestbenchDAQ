@@ -1,0 +1,3 @@
+# Mount the enDAQ FAT volume deterministically when its block partition appears.
+# The corresponding /etc/fstab entry defines mnt-endaq.mount.
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_UUID}=="6430-3964", TAG+="systemd", ENV{SYSTEMD_WANTS}+="mnt-endaq.mount"

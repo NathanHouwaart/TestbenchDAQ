@@ -34,9 +34,9 @@ Prognostic run starts are calculated from one monotonic base time. Completion
 of the preceding run does not redefine the schedule. This prevents processing
 time from silently shifting a test program.
 
-If the next start is later than its configured tolerance, `start_late` records
-the lateness and continues immediately. Strict `abort` policy remains
-available.
+If the next start is later than its configured tolerance, the default `abort`
+policy stops the session with an explicit error. `start_late` is an opt-in
+policy that records the lateness and continues immediately.
 
 enDAQ stop, remount, offload, and checksum verification are part of every run.
 Prognostic IDE signal export is deferred until scheduled acquisition has ended.
@@ -48,13 +48,20 @@ generated.
 
 ## enDAQ lifecycle
 
-The enDAQ library's start return value is not treated as authoritative because
-its serial implementation can compare a stale response status after sending
-the command. A successful storage dismount proves recording started.
+The enDAQ filesystem is flushed and cleanly unmounted before `RecStart`; this
+prevents the recorder's USB mode switch from tearing down a mounted FAT
+filesystem. The enDAQ library's start return value is not treated as
+authoritative because its serial implementation can compare a stale response
+status after sending the command. Disappearance of the previously mounted USB
+block device proves recording started.
 
 Stop retries the configured recorder's serial interface for up to
 `remount_timeout_s`, then rediscovers the mounted recorder by identity. A start
 command with uncertain outcome is always included in cleanup.
+
+The Linux mount contract uses one mechanism: a udev `SYSTEMD_WANTS` dependency
+starts the `/etc/fstab`-generated `mnt-endaq.mount` unit when the UUID appears.
+There is no automount and no timer-coalesced `systemd-run` command.
 
 Before each run, TestbenchDAQ snapshots recorder filenames and storage
 capacity. After remount, it accepts only newly appearing IDE filenames, copies

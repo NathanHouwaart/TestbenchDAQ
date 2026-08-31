@@ -3,10 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from subprocess import CompletedProcess
 from unittest.mock import patch
 
 from tbdaq.adapters.endaq import EndaqAdapter
 from tbdaq.config import EndaqConfig
+
+
+def subprocess_completed(returncode: int, stdout: str, stderr: str):
+    return CompletedProcess([], returncode, stdout, stderr)
 
 
 class _FakeCommand:
@@ -34,11 +39,42 @@ class EndaqAdapterTests(unittest.TestCase):
             patch.object(adapter, "_refresh_mounted_device"),
             patch.object(adapter, "_check_storage_capacity"),
             patch.object(adapter, "_list_ide_files", return_value=[]),
+            patch.object(adapter, "_clean_unmount", return_value="/dev/fake"),
+            patch.object(adapter, "_await_block_disconnect"),
         ):
             result = adapter.start()
         self.assertTrue(result.ok)
         self.assertFalse(result.start_library_acknowledged)
         self.assertTrue(adapter.needs_stop)
+        self.assertIn("clean_unmount", result.phase_timings_s)
+
+    def test_clean_unmount_flushes_and_unmounts_mount_path(self) -> None:
+        adapter = EndaqAdapter(EndaqConfig(enabled=True, mount_path="/mnt/endaq"))
+        adapter._mount_path = "/mnt/endaq"
+        findmnt = subprocess_completed(0, "/dev/sda1 vfat\n", "")
+        umount = subprocess_completed(0, "", "")
+        with (
+            patch("tbdaq.adapters.endaq.os.sync") as sync,
+            patch("tbdaq.adapters.endaq.subprocess.run", side_effect=[findmnt, umount]) as run,
+            patch("tbdaq.adapters.endaq.os.path.realpath", return_value="/dev/sda1"),
+        ):
+            source = adapter._clean_unmount()
+        self.assertEqual(source, "/dev/sda1")
+        sync.assert_called_once_with()
+        self.assertEqual(run.call_args_list[1].args[0], ["umount", "/mnt/endaq"])
+
+    def test_clean_unmount_failure_is_actionable(self) -> None:
+        adapter = EndaqAdapter(EndaqConfig(enabled=True, mount_path="/mnt/endaq"))
+        adapter._mount_path = "/mnt/endaq"
+        findmnt = subprocess_completed(0, "/dev/sda1 vfat\n", "")
+        umount = subprocess_completed(32, "", "must be superuser")
+        with (
+            patch("tbdaq.adapters.endaq.os.sync"),
+            patch("tbdaq.adapters.endaq.subprocess.run", side_effect=[findmnt, umount]),
+            patch("tbdaq.adapters.endaq.os.path.realpath", return_value="/dev/sda1"),
+            self.assertRaisesRegex(RuntimeError, "fstab 'users' option"),
+        ):
+            adapter._clean_unmount()
 
     def test_offload_preserves_and_verifies_all_new_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
