@@ -25,6 +25,7 @@ echo ""
 
 python3 -m tbdaq \
   --config config.json \
+  --mode prognostic \
   --run-duration-s "$DURATION" \
   --run-count      "$COUNT" \
   --run-period-s   "$PERIOD" \

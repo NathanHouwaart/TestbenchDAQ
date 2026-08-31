@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from tbdaq.config import GatorConfig
+from tbdaq.isa_export import SignalFile, export_gator_signals
 
 _START_UTC_RE = re.compile(r"START_UTC_US=(\d+)")
 
@@ -29,6 +31,8 @@ class GatorRunResult:
 
 
 class GatorAdapter:
+    family = "gator"
+
     def __init__(self, config: GatorConfig) -> None:
         self._config = config
         self._process: Optional[subprocess.Popen] = None
@@ -38,9 +42,39 @@ class GatorAdapter:
     # Public API
     # ------------------------------------------------------------------
 
+    def discover(self) -> Optional[str]:
+        binary = Path(self._config.binary_path)
+        if not binary.is_file():
+            return f"Gator binary not found: {binary}"
+        if not os.access(binary, os.X_OK):
+            return f"Gator binary is not executable: {binary}"
+        if self._config.library_path and not Path(self._config.library_path).is_dir():
+            return f"Gator library directory not found: {self._config.library_path}"
+        return None
+
+    @property
+    def result(self) -> GatorRunResult:
+        return self._result
+
+    def start_run(self, run_dir: Path) -> GatorRunResult:
+        raw_dir = run_dir / "raw" / self.family
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        return self.start(str(raw_dir / "gator_channel.csv"))
+
+    def stop_run(self, run_dir: Path) -> GatorRunResult:
+        del run_dir
+        return self.stop()
+
+    def export_run(self, run_dir: Path) -> list[SignalFile]:
+        source = Path(self._result.output_path)
+        if not self._result.ok or not source.is_file():
+            return []
+        return export_gator_signals(source, run_dir / "signals" / self.family)
+
     def start(self, output_path: str) -> GatorRunResult:
         """Start the C++ binary and wait for it to print START_UTC_US."""
         cfg = self._config
+        self._result = GatorRunResult(output_path=output_path)
 
         if not Path(cfg.binary_path).is_file():
             self._result.error = f"Gator binary not found: {cfg.binary_path}"
@@ -64,8 +98,6 @@ class GatorAdapter:
             existing = env.get("LD_LIBRARY_PATH", "")
             env["LD_LIBRARY_PATH"] = f"{cfg.library_path}:{existing}" if existing else cfg.library_path
 
-        self._result = GatorRunResult(output_path=output_path)
-
         try:
             self._process = subprocess.Popen(
                 args,
@@ -78,22 +110,34 @@ class GatorAdapter:
             self._result.error = f"Failed to launch Gator binary: {exc}"
             return self._result
 
-        # Read lines until we see START_UTC_US or the process exits early
+        # Read lines until the recorder reports readiness, exits, or times out.
         assert self._process.stdout is not None
-        for line in self._process.stdout:
-            print(f"[gator] {line}", end="")
-            match = _START_UTC_RE.search(line)
-            if match:
-                self._result.start_utc_us = int(match.group(1))
-                break
-        else:
-            # stdout closed without seeing the token — binary failed at startup
-            self._process.wait()
-            stderr = self._process.stderr.read() if self._process.stderr else ""
-            self._result.error = (
-                f"Gator binary exited before recording started "
-                f"(exit code {self._process.returncode}). stderr: {stderr.strip()}"
-            )
+        selector = selectors.DefaultSelector()
+        selector.register(self._process.stdout, selectors.EVENT_READ)
+        deadline = time.monotonic() + cfg.start_timeout_s
+        try:
+            while self._result.start_utc_us is None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._terminate_after_start_failure(
+                        f"Gator did not become ready within {cfg.start_timeout_s:g}s."
+                    )
+                    break
+                if not selector.select(timeout=min(remaining, 0.25)):
+                    if self._process.poll() is not None:
+                        self._record_early_exit()
+                        break
+                    continue
+                line = self._process.stdout.readline()
+                if not line:
+                    self._record_early_exit()
+                    break
+                print(f"[gator] {line}", end="")
+                match = _START_UTC_RE.search(line)
+                if match:
+                    self._result.start_utc_us = int(match.group(1))
+        finally:
+            selector.close()
 
         return self._result
 
@@ -107,11 +151,17 @@ class GatorAdapter:
         if self._process.poll() is None:
             self._process.terminate()
 
-        self._drain_stdout()
-        self._process.wait()
+        try:
+            stdout, stderr = self._process.communicate(timeout=self._config.stop_timeout_s)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            stdout, stderr = self._process.communicate()
+            self._result.error = (
+                f"Gator did not stop within {self._config.stop_timeout_s:g}s and was killed."
+            )
+        self._consume_stdout(stdout)
 
-        if self._process.returncode not in (0, -15):  # -15 = SIGTERM
-            stderr = self._process.stderr.read() if self._process.stderr else ""
+        if self._process.returncode not in (0, -15) and self._result.error is None:
             self._result.error = (
                 f"Gator binary exited with code {self._process.returncode}. "
                 f"stderr: {stderr.strip()}"
@@ -128,12 +178,16 @@ class GatorAdapter:
         if self._process is None:
             return self._result
 
-        self._drain_stdout()
-        self._process.wait()
+        try:
+            stdout, stderr = self._process.communicate(timeout=self._config.stop_timeout_s)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            stdout, stderr = self._process.communicate()
+            self._result.error = "Gator timed out while waiting for natural completion."
+        self._consume_stdout(stdout)
         self._result.stop_utc_us = _now_utc_us()
 
-        if self._process.returncode != 0:
-            stderr = self._process.stderr.read() if self._process.stderr else ""
+        if self._process.returncode != 0 and self._result.error is None:
             self._result.error = (
                 f"Gator binary exited with code {self._process.returncode}. "
                 f"stderr: {stderr.strip()}"
@@ -146,15 +200,35 @@ class GatorAdapter:
     # Private helpers
     # ------------------------------------------------------------------
 
-    def _drain_stdout(self) -> None:
-        if self._process is None or self._process.stdout is None:
-            return
+    def _consume_stdout(self, output: str) -> None:
         samples_re = re.compile(r"Wrote (\d+) samples")
-        for line in self._process.stdout:
+        for line in output.splitlines(keepends=True):
             print(f"[gator] {line}", end="")
             m = samples_re.search(line)
             if m:
                 self._result.samples_written = int(m.group(1))
+
+    def _record_early_exit(self) -> None:
+        assert self._process is not None
+        stdout, stderr = self._process.communicate()
+        self._consume_stdout(stdout)
+        self._result.error = (
+            "Gator binary exited before recording started "
+            f"(exit code {self._process.returncode}). stderr: {stderr.strip()}"
+        )
+
+    def _terminate_after_start_failure(self, message: str) -> None:
+        assert self._process is not None
+        if self._process.poll() is None:
+            self._process.terminate()
+        try:
+            stdout, stderr = self._process.communicate(timeout=self._config.stop_timeout_s)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            stdout, stderr = self._process.communicate()
+        self._consume_stdout(stdout)
+        detail = f" stderr: {stderr.strip()}" if stderr.strip() else ""
+        self._result.error = message + detail
 
 
 def _now_utc_us() -> int:

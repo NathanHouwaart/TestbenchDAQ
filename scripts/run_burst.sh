@@ -21,6 +21,7 @@ echo "Burst: ${COUNT} run(s) × ${DURATION}s  |  period ${PERIOD}s  |  gap $((PE
 
 python3 -m tbdaq \
   --config config.json \
+  --mode prognostic \
   --run-duration-s "$DURATION" \
   --run-count      "$COUNT" \
   --run-period-s   "$PERIOD" \

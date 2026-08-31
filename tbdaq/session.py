@@ -1,322 +1,516 @@
-"""Session orchestrator: starts both adapters concurrently, records sync data,
-   writes a manifest, and handles fixed-duration + manual-stop + multi-run modes."""
+"""Safe session orchestration for coordinated test-bench acquisition."""
 from __future__ import annotations
 
 import json
 import logging
+import secrets
 import threading
 import time
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, Mapping, Optional
 
-from tbdaq.config import SessionConfig
-from tbdaq.adapters.gator import GatorAdapter
 from tbdaq.adapters.endaq import EndaqAdapter
-from tbdaq.isa_export import export_gator_isa, export_endaq_isa, write_export_map, SignalFile
+from tbdaq.adapters.gator import GatorAdapter
+from tbdaq.config import SessionConfig
+from tbdaq.isa_export import SignalFile, write_signal_map
 
 _LOG = logging.getLogger(__name__)
 
-SESSION_ID_FORMAT = "%Y-%m-%dT%H.%M.%S"
-
 
 class Session:
-    def __init__(self, config: SessionConfig) -> None:
+    """Run one validated diagnostic or prognostic acquisition session.
+
+    Adapters may be injected for tests. Production sessions create adapters
+    from the enabled sensor sections in the configuration.
+    """
+
+    def __init__(
+        self,
+        config: SessionConfig,
+        *,
+        adapters: Optional[Mapping[str, Any]] = None,
+        clock: Callable[[], float] = time.time,
+        monotonic: Callable[[], float] = time.monotonic,
+        sleep: Callable[[float], None] = time.sleep,
+        input_fn: Callable[[str], str] = input,
+        session_id: Optional[str] = None,
+    ) -> None:
+        config.validate()
         self._config = config
-        self._session_id = datetime.now().strftime(SESSION_ID_FORMAT)
+        self._clock = clock
+        self._monotonic = monotonic
+        self._sleep = sleep
+        self._input = input_fn
+        self._interrupt_requested = False
+        self._session_id = session_id or _new_session_id()
         self._session_dir = Path(config.output_root) / self._session_id
-        self._session_dir.mkdir(parents=True, exist_ok=True)
-        self._manifest: dict = {
+        self._session_dir.mkdir(parents=True, exist_ok=False)
+        self._manifest_path = self._session_dir / "session_manifest.json"
+        self._export_map_path = self._session_dir / "signal_export_map.csv"
+        self._log_handler = self._install_file_logging()
+        self._adapters = dict(adapters) if adapters is not None else self._build_adapters()
+        self._manifest: dict[str, Any] = {
+            "schema_version": 1,
+            "application": "TestbenchDAQ",
             "session_id": self._session_id,
             "session_dir": str(self._session_dir),
+            "mode": config.mode,
+            "status": "initializing",
+            "abort_reason": None,
+            "started_at_utc": _iso_utc(self._clock()),
+            "ended_at_utc": None,
+            "config": config.to_dict(),
+            "preflight": {},
             "runs": [],
+            "artifacts": {
+                "manifest": str(self._manifest_path),
+                "log": str(self._session_dir / "session.log"),
+                "signal_export_map": str(self._export_map_path),
+            },
+            "limitations": [
+                "Signal CSV output is an interim format, not a complete ISA-PHM serialization.",
+                "Cross-device timestamp normalization is deferred to the synchronization phase.",
+            ],
         }
+        self._write_manifest()
 
-    # ------------------------------------------------------------------
-    # Public entry point
-    # ------------------------------------------------------------------
+    def _build_adapters(self) -> dict[str, Any]:
+        adapters: dict[str, Any] = {}
+        if self._config.gator.enabled:
+            adapters["gator"] = GatorAdapter(self._config.gator)
+        if self._config.endaq.enabled:
+            adapters["endaq"] = EndaqAdapter(self._config.endaq)
+        return adapters
 
-    def run(self) -> dict:
-        cfg = self._config
+    def run(self) -> dict[str, Any]:
+        """Execute the session and always persist a terminal manifest."""
+        try:
+            active = self._preflight()
+            if not active:
+                return self._finish("aborted", "No enabled sensors passed preflight.")
 
-        # --- Discover endaq once per session (USB device must be connected) ---
-        endaq_adapter: Optional[EndaqAdapter] = None
-        if cfg.endaq.enabled:
-            endaq_adapter = EndaqAdapter(cfg.endaq)
-            err = endaq_adapter.discover()
-            if err:
-                print(f"  Endaq : SKIPPED — {err}")
-                endaq_adapter = None
-            else:
-                print("  Endaq : found")
-        else:
-            print("  Endaq : disabled in config")
+            unavailable = [
+                family
+                for family in self._config.enabled_families()
+                if family not in active
+            ]
+            if unavailable and not self._config.allow_partial:
+                return self._finish(
+                    "aborted",
+                    f"Required sensor preflight failed: {', '.join(unavailable)}.",
+                )
 
-        gator_adapter: Optional[GatorAdapter] = None
-        if cfg.gator.enabled:
-            gator_adapter = GatorAdapter(cfg.gator)
-            print("  Gator : enabled")
-        else:
-            print("  Gator : disabled in config")
-
-        for run_number in range(1, cfg.run_count + 1):
-            run_id = f"run_{run_number:02d}"
-            run_dir = self._session_dir / run_id
-            run_dir.mkdir(parents=True, exist_ok=True)
-
-            print(f"\n{'='*60}")
-            print(f"Session {self._session_id}  |  {run_id} of {cfg.run_count}")
-            print(f"{'='*60}")
-
-            run_manifest = self._execute_run(
-                run_number=run_number,
-                run_id=run_id,
-                run_dir=run_dir,
-                gator_adapter=gator_adapter,
-                endaq_adapter=endaq_adapter,
-            )
-            self._manifest["runs"].append(run_manifest)
+            self._manifest["status"] = "running"
             self._write_manifest()
+            base_wall = self._clock()
+            base_monotonic = self._monotonic()
 
-            # Wait for the next run's start if a period is configured
-            if run_number < cfg.run_count and cfg.run_period_s is not None:
-                elapsed = run_manifest.get("actual_duration_s", 0) or 0
-                wait = max(0.0, cfg.run_period_s - elapsed)
-                if wait > 0:
-                    print(f"Waiting {wait:.1f}s until next run...")
-                    time.sleep(wait)
+            for run_number in range(1, self._config.run_count + 1):
+                period = self._config.run_period_s or 0.0
+                planned_monotonic = base_monotonic + ((run_number - 1) * period)
+                planned_wall = base_wall + ((run_number - 1) * period)
+                self._wait_until(planned_monotonic)
+                lateness = max(0.0, self._monotonic() - planned_monotonic)
+                if lateness > self._config.missed_start_tolerance_s:
+                    reason = (
+                        f"run_{run_number:02d} missed its planned start by "
+                        f"{lateness:.3f}s (tolerance "
+                        f"{self._config.missed_start_tolerance_s:.3f}s)."
+                    )
+                    self._manifest["runs"].append(
+                        {
+                            "run_id": f"run_{run_number:02d}",
+                            "run_number": run_number,
+                            "status": "aborted",
+                            "planned_start_utc": _iso_utc(planned_wall),
+                            "lateness_s": round(lateness, 6),
+                            "errors": [reason],
+                        }
+                    )
+                    return self._finish("aborted", reason)
 
-        print(f"\nSession complete. Output: {self._session_dir}")
-        return self._manifest
+                run_record = self._execute_run(
+                    run_number=run_number,
+                    planned_start_wall=planned_wall,
+                    lateness=lateness,
+                    active_adapters=active,
+                )
+                if unavailable and run_record["status"] == "success":
+                    run_record["status"] = "partial"
+                    run_record["errors"].append(
+                        "Enabled sensors unavailable at preflight: "
+                        + ", ".join(unavailable)
+                        + "."
+                    )
+                self._manifest["runs"].append(run_record)
+                self._write_manifest()
 
-    # ------------------------------------------------------------------
-    # Single run
-    # ------------------------------------------------------------------
+                if run_record["status"] in {"failed", "interrupted"}:
+                    terminal = "interrupted" if run_record["status"] == "interrupted" else "failed"
+                    return self._finish(
+                        terminal,
+                        f"{run_record['run_id']} ended with status {run_record['status']}.",
+                    )
+                if run_record["status"] == "partial" and not self._config.allow_partial:
+                    return self._finish(
+                        "failed",
+                        f"{run_record['run_id']} was partial while allow_partial is false.",
+                    )
+
+            statuses = [run["status"] for run in self._manifest["runs"]]
+            status = "success" if statuses and all(item == "success" for item in statuses) else "partial"
+            return self._finish(status)
+        except KeyboardInterrupt:
+            return self._finish("interrupted", "Interrupted by user.")
+        except Exception as exc:
+            _LOG.exception("Unhandled session error")
+            return self._finish("failed", f"Unhandled session error: {exc}")
+        finally:
+            self._remove_file_logging()
+
+    def _preflight(self) -> dict[str, Any]:
+        active: dict[str, Any] = {}
+        for family in self._config.enabled_families():
+            adapter = self._adapters.get(family)
+            if adapter is None:
+                error = f"No adapter implementation was provided for {family}."
+            else:
+                try:
+                    error = adapter.discover()
+                except Exception as exc:
+                    error = f"Discovery raised {type(exc).__name__}: {exc}"
+            available = adapter is not None and error is None
+            self._manifest["preflight"][family] = {
+                "enabled": True,
+                "available": available,
+                "error": error,
+            }
+            if available:
+                active[family] = adapter
+        self._write_manifest()
+        return active
 
     def _execute_run(
         self,
         *,
         run_number: int,
-        run_id: str,
-        run_dir: Path,
-        gator_adapter: Optional[GatorAdapter],
-        endaq_adapter: Optional[EndaqAdapter],
-    ) -> dict:
-        cfg = self._config
-        run_manifest: dict = {
+        planned_start_wall: float,
+        lateness: float,
+        active_adapters: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        run_id = f"run_{run_number:02d}"
+        run_dir = self._session_dir / run_id
+        run_dir.mkdir(parents=True, exist_ok=False)
+        record: dict[str, Any] = {
             "run_id": run_id,
             "run_number": run_number,
-            "gator": None,
-            "endaq": None,
-            "sync": None,
-            "status": "failed",
+            "status": "starting",
+            "planned_start_utc": _iso_utc(planned_start_wall),
+            "orchestrator_start_utc": _iso_utc(self._clock()),
+            "lateness_s": round(lateness, 6),
+            "measurement_window": {
+                "reference": "all_started_adapters_ready",
+                "start_utc": None,
+                "stop_requested_utc": None,
+                "target_duration_s": self._config.run_duration_s,
+                "actual_duration_s": None,
+            },
+            "adapters": {},
+            "signals": [],
+            "errors": [],
         }
 
-        gator_output = str(run_dir / "gator_channel.csv")
-        endaq_raw_dir = str(run_dir / "raw")
+        start_calls = self._call_adapters_concurrently(
+            active_adapters,
+            method="start_run",
+            run_dir=run_dir,
+        )
+        started: dict[str, Any] = {}
+        for family, call in start_calls.items():
+            result = call["result"]
+            ok = result is not None and bool(getattr(result, "ok", False))
+            record["adapters"][family] = {
+                "start_dispatch_utc": call["dispatch_utc"],
+                "start_return_utc": call["return_utc"],
+                "start": _serialize_result(result),
+                "stop": None,
+                "processing": None,
+            }
+            if call["error"]:
+                record["errors"].append(f"{family} start call failed: {call['error']}")
+            elif not ok:
+                error = getattr(result, "error", None) or "adapter did not report a successful start"
+                record["errors"].append(f"{family} start failed: {error}")
+            else:
+                started[family] = active_adapters[family]
 
-        # --- Start both devices as close together as possible ---
-        errors: list[str] = []
-        gator_start_wall: Optional[float] = None
-        endaq_start_wall: Optional[float] = None
+        missing = [family for family in active_adapters if family not in started]
+        if self._interrupt_requested:
+            stop_calls = self._stop_started(started, run_dir)
+            self._record_stops(record, stop_calls)
+            record["status"] = "interrupted"
+            record["errors"].append("Interrupted while sensors were starting.")
+            record["ended_at_utc"] = _iso_utc(self._clock())
+            return record
+        if missing and not self._config.allow_partial:
+            stop_calls = self._stop_started(started, run_dir)
+            self._record_stops(record, stop_calls)
+            record["status"] = "failed"
+            record["errors"].append(
+                f"Required sensors failed to start: {', '.join(missing)}."
+            )
+            record["ended_at_utc"] = _iso_utc(self._clock())
+            return record
+        if not started:
+            record["status"] = "failed"
+            record["errors"].append("No sensors started successfully.")
+            record["ended_at_utc"] = _iso_utc(self._clock())
+            return record
 
-        gator_result = None
-        endaq_result = None
+        measurement_start_wall = self._clock()
+        measurement_start_monotonic = self._monotonic()
+        record["measurement_window"]["start_utc"] = _iso_utc(measurement_start_wall)
+        record["status"] = "measuring"
+        interrupted = False
 
-        def _start_gator():
-            nonlocal gator_result, gator_start_wall
-            if gator_adapter is None:
-                return
-            gator_start_wall = time.time()
-            gator_result = gator_adapter.start(gator_output)
+        try:
+            if self._config.run_duration_s is None:
+                self._input("Press Enter to stop the diagnostic run...")
+            else:
+                self._wait_duration(self._config.run_duration_s)
+        except (KeyboardInterrupt, EOFError):
+            interrupted = True
+            record["errors"].append("Measurement interrupted by user.")
+        finally:
+            stop_request_wall = self._clock()
+            record["measurement_window"]["stop_requested_utc"] = _iso_utc(stop_request_wall)
+            record["measurement_window"]["actual_duration_s"] = round(
+                self._monotonic() - measurement_start_monotonic,
+                6,
+            )
+            stop_calls = self._stop_started(started, run_dir)
+            self._record_stops(record, stop_calls)
 
-        def _start_endaq():
-            nonlocal endaq_result, endaq_start_wall
-            if endaq_adapter is None:
-                return
-            endaq_start_wall = time.time()
-            endaq_result = endaq_adapter.start()
+        signal_results: list[SignalFile] = []
+        processing_incomplete = False
+        for family, adapter in started.items():
+            adapter_record = record["adapters"][family]
+            try:
+                signals = adapter.export_run(run_dir)
+                signal_results.extend(signals)
+                failed = [signal for signal in signals if signal.status != "success"]
+                processing_status = "success" if signals and not failed else "failed"
+                if family == "endaq":
+                    conversion_status = getattr(adapter.result, "conversion_status", "unknown")
+                    if conversion_status != "success":
+                        processing_status = conversion_status
+                adapter_record["processing"] = {
+                    "status": processing_status,
+                    "successful_signals": sum(s.status == "success" for s in signals),
+                    "failed_signals": len(failed),
+                }
+                if processing_status != "success":
+                    processing_incomplete = True
+                    record["errors"].append(
+                        f"{family} processing status is {processing_status}."
+                    )
+            except Exception as exc:
+                processing_incomplete = True
+                adapter_record["processing"] = {
+                    "status": "failed",
+                    "successful_signals": 0,
+                    "failed_signals": 1,
+                    "error": str(exc),
+                }
+                record["errors"].append(f"{family} processing failed: {exc}")
 
-        t_gator = threading.Thread(target=_start_gator, daemon=True)
-        t_endaq = threading.Thread(target=_start_endaq, daemon=True)
-        t_gator.start()
-        t_endaq.start()
-        t_gator.join()
-        t_endaq.join()
+        record["signals"] = [_serialize_signal(signal) for signal in signal_results]
+        if signal_results:
+            write_signal_map(
+                self._export_map_path,
+                [
+                    {
+                        "run_id": run_id,
+                        "device_family": _signal_family(signal),
+                        "signal_alias": signal.alias,
+                        "source_file": signal.source_file,
+                        "source_column": signal.source_column,
+                        "signal_path": str(signal.path),
+                        "time_unit": "s",
+                        "status": signal.status,
+                        "error": signal.error or "",
+                    }
+                    for signal in signal_results
+                ],
+            )
 
-        if gator_result and not gator_result.ok:
-            errors.append(f"Gator start: {gator_result.error}")
-        if endaq_result and not endaq_result.ok:
-            errors.append(f"Endaq start: {endaq_result.error}")
+        stop_failed = any(
+            item.get("stop_call_error")
+            or item.get("stop") is None
+            or item.get("stop", {}).get("error")
+            for item in record["adapters"].values()
+            if "stop" in item
+        )
+        if interrupted or self._interrupt_requested:
+            record["status"] = "interrupted"
+        elif stop_failed:
+            record["status"] = "failed"
+        elif missing or processing_incomplete:
+            record["status"] = "partial"
+        else:
+            record["status"] = "success"
+        record["ended_at_utc"] = _iso_utc(self._clock())
+        return record
 
-        # Record sync data: wall-clock times at start, and UTC from each device
-        run_manifest["sync"] = _build_sync_record(
-            gator_start_wall=gator_start_wall,
-            gator_start_utc_us=gator_result.start_utc_us if gator_result else None,
-            endaq_start_wall=endaq_start_wall,
-            endaq_start_utc_us=endaq_result.start_utc_us if endaq_result else None,
+    def _call_adapters_concurrently(
+        self,
+        adapters: Mapping[str, Any],
+        *,
+        method: str,
+        run_dir: Path,
+    ) -> dict[str, dict[str, Any]]:
+        barrier = threading.Barrier(len(adapters) + 1)
+        calls: dict[str, dict[str, Any]] = {
+            family: {"result": None, "error": None, "dispatch_utc": None, "return_utc": None}
+            for family in adapters
+        }
+
+        def invoke(family: str, adapter: Any) -> None:
+            try:
+                barrier.wait()
+                calls[family]["dispatch_utc"] = _iso_utc(self._clock())
+                calls[family]["result"] = getattr(adapter, method)(run_dir)
+            except Exception as exc:
+                calls[family]["error"] = f"{type(exc).__name__}: {exc}"
+            finally:
+                calls[family]["return_utc"] = _iso_utc(self._clock())
+
+        threads = [
+            threading.Thread(target=invoke, args=(family, adapter), daemon=True)
+            for family, adapter in adapters.items()
+        ]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            while thread.is_alive():
+                try:
+                    thread.join(timeout=0.2)
+                except KeyboardInterrupt:
+                    # Adapter calls must reach a known state before cleanup can
+                    # be performed. Remember the interrupt and finish joining.
+                    self._interrupt_requested = True
+        return calls
+
+    def _stop_started(
+        self,
+        started: Mapping[str, Any],
+        run_dir: Path,
+    ) -> dict[str, dict[str, Any]]:
+        if not started:
+            return {}
+        return self._call_adapters_concurrently(
+            started,
+            method="stop_run",
+            run_dir=run_dir,
         )
 
-        # --- Wait for duration or manual stop ---
-        run_start_wall = time.time()
+    @staticmethod
+    def _record_stops(record: dict[str, Any], calls: Mapping[str, dict[str, Any]]) -> None:
+        for family, call in calls.items():
+            adapter_record = record["adapters"].setdefault(family, {})
+            result = call["result"]
+            adapter_record["stop_dispatch_utc"] = call["dispatch_utc"]
+            adapter_record["stop_return_utc"] = call["return_utc"]
+            adapter_record["stop"] = _serialize_result(result)
+            adapter_record["stop_call_error"] = call["error"]
+            if call["error"]:
+                record["errors"].append(f"{family} stop call failed: {call['error']}")
+            elif result is None:
+                record["errors"].append(f"{family} stop call returned no result.")
+            elif not bool(getattr(result, "ok", False)):
+                record["errors"].append(
+                    f"{family} stop failed: {getattr(result, 'error', 'unknown error')}"
+                )
 
-        if cfg.run_duration_s is not None:
-            print(f"Recording for {cfg.run_duration_s:.0f} seconds...")
-            time.sleep(cfg.run_duration_s)
-        else:
-            print("Press ENTER to stop recording.")
-            try:
-                input()
-            except (EOFError, KeyboardInterrupt):
-                pass
-
-        run_actual_duration = time.time() - run_start_wall
-
-        # --- Stop both ---
-        def _stop_gator():
-            if gator_adapter is None:
+    def _wait_until(self, target_monotonic: float) -> None:
+        while True:
+            remaining = target_monotonic - self._monotonic()
+            if remaining <= 0:
                 return
-            gator_adapter.stop()
+            self._sleep(min(remaining, 0.2))
 
-        def _stop_endaq():
-            if endaq_adapter is None:
-                return
-            endaq_adapter.stop(endaq_raw_dir)
+    def _wait_duration(self, duration_s: float) -> None:
+        self._wait_until(self._monotonic() + duration_s)
 
-        t_sg = threading.Thread(target=_stop_gator, daemon=True)
-        t_se = threading.Thread(target=_stop_endaq, daemon=True)
-        t_sg.start()
-        t_se.start()
-        t_sg.join()
-        t_se.join()
-
-        # --- Convert endaq IDE to CSV if ide2csv is configured ---
-        if endaq_adapter is not None:
-            endaq_adapter.convert(str(run_dir))
-
-        # --- ISA export: split each device's output into per-signal time,value CSVs ---
-        isa_dir = run_dir / "isa"
-        export_map_path = self._session_dir / "isa_export_map.csv"
-        isa_signals: list[SignalFile] = []
-
-        if gator_result and gator_result.ok and Path(gator_output).exists():
-            gator_signals = export_gator_isa(Path(gator_output), isa_dir / "gator")
-            isa_signals.extend(gator_signals)
-
-        endaq_csv_dir = run_dir
-        endaq_csvs = list(endaq_csv_dir.glob("DAQ*.csv"))
-        if endaq_result and endaq_result.ok and endaq_csvs:
-            endaq_signals = export_endaq_isa(endaq_csv_dir, isa_dir / "endaq")
-            isa_signals.extend(endaq_signals)
-
-        if isa_signals:
-            write_export_map(export_map_path, [
-                {
-                    "run_id": run_id,
-                    "device_family": "gator" if s.alias.startswith("gator") else "endaq",
-                    "signal_alias": s.alias,
-                    "source_file": s.source_file,
-                    "source_column": s.source_column,
-                    "isa_path": str(s.path),
-                    "time_unit": "s",
-                    "status": s.status,
-                    "error": s.error or "",
-                }
-                for s in isa_signals
-            ])
-
-        run_manifest["isa"] = {
-            "signals": [{"alias": s.alias, "path": str(s.path), "status": s.status}
-                        for s in isa_signals],
-            "export_map": str(export_map_path) if isa_signals else None,
-        }
-
-        run_manifest["actual_duration_s"] = round(run_actual_duration, 3)
-
-        if gator_result:
-            run_manifest["gator"] = {
-                "output": gator_output,
-                "samples_written": gator_result.samples_written,
-                "start_utc_us": gator_result.start_utc_us,
-                "stop_utc_us": gator_result.stop_utc_us,
-                "error": gator_result.error,
-            }
-            if gator_result.error:
-                errors.append(f"Gator: {gator_result.error}")
-
-        if endaq_result:
-            run_manifest["endaq"] = {
-                "ide_path": endaq_result.ide_path,
-                "csv_paths": endaq_result.csv_paths,
-                "start_utc_us": endaq_result.start_utc_us,
-                "stop_utc_us": endaq_result.stop_utc_us,
-                "error": endaq_result.error,
-            }
-            if endaq_result.error:
-                errors.append(f"Endaq: {endaq_result.error}")
-
-        run_manifest["status"] = "failed" if errors else "success"
-        run_manifest["errors"] = errors
-
-        _print_run_summary(run_manifest)
-        return run_manifest
-
-    # ------------------------------------------------------------------
-    # Manifest helpers
-    # ------------------------------------------------------------------
+    def _finish(self, status: str, reason: Optional[str] = None) -> dict[str, Any]:
+        self._manifest["status"] = status
+        self._manifest["abort_reason"] = reason
+        self._manifest["ended_at_utc"] = _iso_utc(self._clock())
+        self._write_manifest()
+        return self._manifest
 
     def _write_manifest(self) -> None:
-        path = self._session_dir / "session_manifest.json"
-        path.write_text(json.dumps(self._manifest, indent=2))
+        temporary = self._manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(self._manifest, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(self._manifest_path)
+
+    def _install_file_logging(self) -> logging.Handler:
+        handler = logging.FileHandler(self._session_dir / "session.log", encoding="utf-8")
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+                datefmt="%Y-%m-%dT%H:%M:%S",
+            )
+        )
+        logging.getLogger("tbdaq").addHandler(handler)
+        return handler
+
+    def _remove_file_logging(self) -> None:
+        if self._log_handler is None:
+            return
+        logging.getLogger("tbdaq").removeHandler(self._log_handler)
+        self._log_handler.close()
+        self._log_handler = None
 
 
-def _build_sync_record(
-    gator_start_wall: Optional[float],
-    gator_start_utc_us: Optional[int],
-    endaq_start_wall: Optional[float],
-    endaq_start_utc_us: Optional[int],
-) -> dict:
-    delta_start_ms: Optional[float] = None
-    if gator_start_wall is not None and endaq_start_wall is not None:
-        delta_start_ms = round((gator_start_wall - endaq_start_wall) * 1000, 3)
+def _new_session_id() -> str:
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    return f"{timestamp}-{secrets.token_hex(2)}"
 
-    utc_delta_ms: Optional[float] = None
-    if gator_start_utc_us is not None and endaq_start_utc_us is not None:
-        utc_delta_ms = round((gator_start_utc_us - endaq_start_utc_us) / 1000, 3)
 
+def _iso_utc(epoch_s: float) -> str:
+    return datetime.fromtimestamp(epoch_s, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _serialize_result(result: Any) -> Optional[dict[str, Any]]:
+    if result is None:
+        return None
+    if is_dataclass(result):
+        return asdict(result)
+    if isinstance(result, dict):
+        return dict(result)
     return {
-        "note": (
-            "delta_start_wall_ms: positive = gator started later. "
-            "utc_delta_ms: difference in device-reported UTC at start. "
-            "Use utc_timestamp_us in gator CSV and endaq timestamps to align in post-processing."
-        ),
-        "gator_start_wall_s": gator_start_wall,
-        "endaq_start_wall_s": endaq_start_wall,
-        "delta_start_wall_ms": delta_start_ms,
-        "gator_start_utc_us": gator_start_utc_us,
-        "endaq_start_utc_us": endaq_start_utc_us,
-        "utc_delta_ms": utc_delta_ms,
+        "ok": bool(getattr(result, "ok", False)),
+        "error": getattr(result, "error", None),
     }
 
 
-def _print_run_summary(run: dict) -> None:
-    print(f"\nRun {run['run_id']} — {run['status'].upper()}")
-    print(f"  Duration: {run.get('actual_duration_s', '?')} s")
-    if run.get("gator"):
-        g = run["gator"]
-        print(f"  Gator:  {g.get('samples_written', '?')} samples  →  {g.get('output', '')}")
-    if run.get("endaq"):
-        e = run["endaq"]
-        print(f"  Endaq:  {e.get('ide_path', 'no IDE')}  |  csv: {e.get('csv_paths', [])}")
-    sync = run.get("sync", {})
-    if sync.get("delta_start_wall_ms") is not None:
-        print(f"  Sync:   start Δ = {sync['delta_start_wall_ms']:+.1f} ms (wall clock)")
-    if sync.get("utc_delta_ms") is not None:
-        print(f"          UTC Δ  = {sync['utc_delta_ms']:+.1f} ms (device-reported)")
-    isa = run.get("isa", {})
-    signals = isa.get("signals", [])
-    if signals:
-        ok = sum(1 for s in signals if s["status"] == "success")
-        print(f"  ISA:    {ok}/{len(signals)} signals written → {isa.get('export_map', '')}")
-    for err in run.get("errors", []):
-        print(f"  ERROR:  {err}")
+def _serialize_signal(signal: SignalFile) -> dict[str, Any]:
+    return {
+        "alias": signal.alias,
+        "path": str(signal.path),
+        "source_file": signal.source_file,
+        "source_column": signal.source_column,
+        "status": signal.status,
+        "error": signal.error,
+    }
+
+
+def _signal_family(signal: SignalFile) -> str:
+    return "gator" if signal.alias.startswith("gator") else "endaq"

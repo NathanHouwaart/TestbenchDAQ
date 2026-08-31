@@ -18,6 +18,7 @@ echo "Single run: ${DURATION}s"
 
 python3 -m tbdaq \
   --config config.json \
+  --mode diagnostic \
   --run-duration-s "$DURATION" \
   --run-count 1 \
   "${@:2}"

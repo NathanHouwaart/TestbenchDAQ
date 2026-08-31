@@ -20,6 +20,7 @@ echo "Gator-only: channel ${CHANNEL} for ${DURATION}s"
 
 python3 -m tbdaq \
   --config config.json \
+  --mode diagnostic \
   --no-endaq \
   --gator-channel  "$CHANNEL" \
   --run-duration-s "$DURATION" \

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Continuous measurement — press Ctrl+C to stop.
-# Both Gator and endaq run until you interrupt.
+# Manual diagnostic measurement — press Enter to stop.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -12,5 +11,7 @@ cd "$SCRIPT_DIR/.."
 
 python3 -m tbdaq \
   --config config.json \
+  --mode diagnostic \
+  --manual \
   --run-count 1 \
   "$@"

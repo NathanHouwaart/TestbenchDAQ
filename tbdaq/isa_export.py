@@ -1,5 +1,4 @@
-"""Post-processing: splits raw gator_channel.csv and endaq ide2csv output into
-   individual per-signal ISA-format CSVs (columns: time_s, value)."""
+"""Split raw device output into interim one-signal CSV files."""
 from __future__ import annotations
 
 import csv
@@ -15,7 +14,7 @@ from typing import Optional
 
 @dataclass
 class SignalFile:
-    alias: str            # filename stem, used as the ISA signal name
+    alias: str            # filename stem, used as the signal name
     path: Path            # absolute path to the written CSV
     source_file: str      # relative path of the source file
     source_column: str    # column name inside the source file
@@ -34,7 +33,7 @@ _GATOR_SENSOR_COLUMNS = [
 _GATOR_TIMESTAMP_COLUMN = "utc_timestamp_us"
 
 
-def export_gator_isa(
+def export_gator_signals(
     gator_csv: Path,
     isa_dir: Path,
     gator_label: str = "gator",
@@ -124,12 +123,12 @@ def export_gator_isa(
 _ENDAQ_SOURCE_PATTERN = re.compile(r"_Ch(?P<channel>\d+)_(?P<label>.+)\.csv$", re.IGNORECASE)
 
 
-def export_endaq_isa(
+def export_endaq_signals(
     endaq_csv_dir: Path,
     isa_dir: Path,
     allowlist: set[str] | None = None,
 ) -> list[SignalFile]:
-    """Split all DAQ*_ChNN_<label>.csv files produced by ide2csv into per-axis ISA CSVs.
+    """Split DAQ channel CSV files into individual per-axis signal CSVs.
 
     Time axis is run-relative seconds (t=0 at first row).
     Each non-time column becomes its own file: endaq_<label>_<axis>.csv
@@ -228,17 +227,17 @@ def export_endaq_isa(
 
 
 # ---------------------------------------------------------------------------
-# ISA export map writer
+# Signal export map writer
 # ---------------------------------------------------------------------------
 
 _EXPORT_MAP_COLUMNS = [
     "run_id", "device_family", "signal_alias",
-    "source_file", "source_column", "isa_path",
+    "source_file", "source_column", "signal_path",
     "time_unit", "status", "error",
 ]
 
 
-def write_export_map(export_map_path: Path, rows: list[dict]) -> None:
+def write_signal_map(export_map_path: Path, rows: list[dict]) -> None:
     export_map_path.parent.mkdir(parents=True, exist_ok=True)
     write_header = not export_map_path.exists()
     with export_map_path.open("a", newline="", encoding="utf-8") as fh:
