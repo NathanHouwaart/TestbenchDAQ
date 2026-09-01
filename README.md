@@ -321,6 +321,33 @@ sessions retain useful status information.
 The `signals` directory is intentionally not named `isa`: the current output
 is not yet a complete ISA-PHM package.
 
+### Plotting a session
+
+Create an offline interactive HTML overview from all successful signal CSVs:
+
+```bash
+.venv/bin/python scripts/plot_session.py csv-output/SESSION_ID
+```
+
+The report is written to `SESSION_ID/plots/run_XX_overview.html`. Related axes
+are plotted together, while signals with different physical quantities receive
+separate panels. Large CSVs are reduced to a min/max display envelope so brief
+vibration peaks remain visible; source CSVs are never modified. Useful options:
+
+```bash
+# Plot one run and preserve more display detail
+.venv/bin/python scripts/plot_session.py csv-output/SESSION_ID \
+  --run run_01 --max-points 20000
+
+# Treat Gator zero values (missing detections) as gaps in the plot
+.venv/bin/python scripts/plot_session.py csv-output/SESSION_ID \
+  --gator-zero-as-gap
+```
+
+Plotly is already present in the normal enDAQ environment. For a minimal or
+fresh installation, install the optional plotting dependency with
+`.venv/bin/pip install -e '.[plotting]'`.
+
 ## Convenience scripts
 
 - `scripts/run_configured.sh`

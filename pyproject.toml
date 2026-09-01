@@ -9,6 +9,9 @@ dependencies = [
     "endaq-device>=1.3,<2",
 ]
 
+[project.optional-dependencies]
+plotting = ["plotly>=5,<7"]
+
 [project.scripts]
 tbdaq = "tbdaq.__main__:main"
 
