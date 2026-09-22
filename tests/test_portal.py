@@ -44,6 +44,13 @@ class PortalTests(unittest.TestCase):
         self.assertEqual(page["rows"], [["1", "3"]])
         self.assertTrue(page["has_more"])
 
+    def test_display_name_is_metadata_and_changes_zip_folder(self) -> None:
+        result = self.index.rename("wentelteef", "session-1", "SKF 6204 baseline")
+        self.assertEqual(result["archive_name"], "SKF 6204 baseline")
+        summary = self.index.sessions("wentelteef")[0]
+        self.assertEqual(summary["display_name"], "SKF 6204 baseline")
+        self.assertTrue(self.index.archive_files("wentelteef", "session-1")[0][1].startswith("SKF 6204 baseline/"))
+
     def test_artifact_cannot_escape_session(self) -> None:
         with self.assertRaises(PortalError):
             self.index.artifact("wentelteef", "session-1", "../../outside")

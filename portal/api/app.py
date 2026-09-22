@@ -10,11 +10,12 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
 
 from tbdaq.portal import PortalError, SessionIndex
 
 
-index = SessionIndex(Path(os.environ.get("TBDAQ_DATA_ROOT", "/data")))
+index = SessionIndex(Path(os.environ.get("TBDAQ_DATA_ROOT", "/data")), Path(os.environ.get("TBDAQ_PORTAL_METADATA_ROOT", "/metadata")))
 app = FastAPI(title="TestbenchDAQ data portal", docs_url=None, redoc_url=None)
 
 
@@ -60,6 +61,15 @@ def csv_preview(machine: str, session_id: str, relative_path: str, offset: int =
     return _not_found(lambda: index.csv_preview(machine, session_id, relative_path, offset, limit))
 
 
+class RenameRequest(BaseModel):
+    display_name: str
+
+
+@app.put("/api/machines/{machine}/sessions/{session_id}/display-name")
+def rename(machine: str, session_id: str, request: RenameRequest):
+    return _not_found(lambda: index.rename(machine, session_id, request.display_name))
+
+
 @app.get("/api/machines/{machine}/sessions/{session_id}/artifacts/{relative_path:path}")
 def artifact(machine: str, session_id: str, relative_path: str):
     path = _not_found(lambda: index.artifact(machine, session_id, relative_path))
@@ -98,7 +108,7 @@ def download(machine: str, session_id: str):
         while (chunk := output.get()) is not None:
             yield chunk
 
-    safe_name = "".join(char if char.isalnum() or char in "-_." else "_" for char in session_id)
+    safe_name = index.archive_name(machine, session_id)
     return StreamingResponse(
         stream(), media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},

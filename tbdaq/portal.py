@@ -6,6 +6,7 @@ import re
 import csv
 import shutil
 import itertools
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,8 +21,9 @@ _MACHINE_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 class SessionIndex:
     """Safely expose manifests and artifacts below a fixed read-only root."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, metadata_root: Path | None = None) -> None:
         self.root = root.resolve()
+        self.metadata_root = (metadata_root or self.root / ".portal-metadata").resolve()
 
     def machines(self) -> list[dict[str, Any]]:
         if not self.root.is_dir():
@@ -57,6 +59,7 @@ class SessionIndex:
         if not directory.is_dir():
             return []
         records: list[dict[str, Any]] = []
+        labels = self._labels(machine)
         for session_dir in directory.iterdir():
             manifest = session_dir / "session_manifest.json"
             if not session_dir.is_dir() or not manifest.is_file():
@@ -65,7 +68,7 @@ class SessionIndex:
                 data = self._read_json(manifest)
             except PortalError:
                 continue
-            records.append(self._summary(data, session_dir.name))
+            records.append(self._summary(data, session_dir.name, labels.get(session_dir.name)))
         return sorted(records, key=lambda item: item.get("started_at_utc") or "", reverse=True)
 
     def manifest(self, machine: str, session_id: str) -> dict[str, Any]:
@@ -207,10 +210,40 @@ class SessionIndex:
 
     def archive_files(self, machine: str, session_id: str) -> list[tuple[Path, str]]:
         """Return safe files to include in a whole-session archive."""
+        prefix = self.archive_name(machine, session_id)
         return [
-            (self.artifact(machine, session_id, entry["path"]), entry["path"])
+            (self.artifact(machine, session_id, entry["path"]), f"{prefix}/{entry['path']}")
             for entry in self.artifacts(machine, session_id)
         ]
+
+    def rename(self, machine: str, session_id: str, label: str) -> dict[str, Any]:
+        self._session_directory(machine, session_id)
+        label = " ".join(label.split())
+        if not 1 <= len(label) <= 120:
+            raise PortalError("Name must contain 1 to 120 characters.")
+        labels = self._labels(machine)
+        labels[session_id] = label
+        path = self.metadata_root / f"{machine}.json"
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(labels, indent=2, sort_keys=True), encoding="utf-8")
+        except OSError as exc:
+            raise PortalError(f"Could not save portal label: {exc}") from exc
+        return {"session_id": session_id, "display_name": label, "archive_name": self.archive_name(machine, session_id)}
+
+    def archive_name(self, machine: str, session_id: str) -> str:
+        label = self._labels(machine).get(session_id, session_id)
+        safe = re.sub(r"[^A-Za-z0-9._ -]+", "_", label).strip(" .")
+        return safe or session_id
+
+    def _labels(self, machine: str) -> dict[str, str]:
+        try:
+            value = json.loads((self.metadata_root / f"{machine}.json").read_text(encoding="utf-8"))
+            return {key: text for key, text in value.items() if isinstance(key, str) and isinstance(text, str)} if isinstance(value, dict) else {}
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError):
+            return {}
 
     def _machine_directory(self, machine: str) -> Path:
         if not _MACHINE_NAME.fullmatch(machine):
@@ -240,10 +273,11 @@ class SessionIndex:
         return value
 
     @staticmethod
-    def _summary(manifest: dict[str, Any], directory_name: str) -> dict[str, Any]:
+    def _summary(manifest: dict[str, Any], directory_name: str, display_name: str | None = None) -> dict[str, Any]:
         return {
             "session_id": manifest.get("session_id", directory_name),
             "name": manifest.get("name"),
+            "display_name": display_name,
             "status": manifest.get("status", "unknown"),
             "started_at_utc": manifest.get("started_at_utc"),
             "ended_at_utc": manifest.get("ended_at_utc"),

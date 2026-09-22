@@ -371,6 +371,11 @@ selecting a CSV opens its contents in the main area. CSVs are read in pages of
 250 rows, so viewing a file never loads an entire 600,000-sample recording.
 Use **All tests** to leave the explorer and return to the session list.
 
+An operator can set a display name for a session in the portal. This does not
+rename its acquisition folder or edit its manifest. The label is stored in the
+portal's separate metadata volume and is used as the ZIP filename and its
+top-level folder when downloading that session.
+
 The overview reports the total, used, and free space of the filesystem hosting
 the portal's data root. It warns below 20%/100 GiB free and is critical below
 10%/50 GiB free. This is server storage status only; the portal does not query
