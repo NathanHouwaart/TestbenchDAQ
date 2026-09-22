@@ -161,6 +161,42 @@ showmount -e 192.168.0.189
 Do not use a broad `*(rw,...)` export as a permanent fix; authorize each test
 machine explicitly.
 
+### Troubleshooting: mount works, but `touch` reports `Permission denied`
+
+This means NFS mounting is correct, but the server directory permissions do
+not match the numeric user/group IDs on the acquisition machine. NFS uses
+numbers such as `1000:1000`, not the displayed username.
+
+On the **acquisition machine**, run:
+
+```bash
+id
+```
+
+Note the `uid` and `gid`. On the **server**, inspect the directory using
+numeric IDs:
+
+```bash
+sudo ls -ldn /srv/testbenchdaq/wentelteef
+```
+
+If `id` on `wentelteef` reports UID `1000` and GID `1000`, fix that server
+directory with:
+
+```bash
+sudo chown 1000:1000 /srv/testbenchdaq/wentelteef
+sudo chmod 2775 /srv/testbenchdaq/wentelteef
+```
+
+Use the actual values from `id`, then retry on the acquisition machine:
+
+```bash
+touch /mnt/testbench-results/test-write
+rm /mnt/testbench-results/test-write
+```
+
+No unmount or server restart is needed after changing ownership or mode.
+
 ## Run the portal with Docker Compose
 
 Install Docker Engine and the Docker Compose plugin on the server. The portal
