@@ -6,31 +6,116 @@ no endpoint that can start, stop, or configure a Gator or enDAQ.
 
 ## NFS storage
 
-On the server, install the NFS service and create a separate export for each
-machine:
+The server is `192.168.0.189`. Each acquisition machine mounts a different
+server directory at the same local path, `/mnt/testbench-results`. That local
+path is only the *mount point*: after mounting, writing there writes directly
+to the server, not to the acquisition machine's disk.
+
+### Configure the server
+
+Run these commands on `192.168.0.189`:
 
 ```bash
+sudo apt update
 sudo apt install nfs-kernel-server
 sudo mkdir -p /srv/testbenchdaq/wentelteef /srv/testbenchdaq/knarskast
-sudo chown 1000:1000 /srv/testbenchdaq/wentelteef /srv/testbenchdaq/knarskast
 ```
 
-Add the acquisition machines' fixed IP addresses to `/etc/exports` (replace
-the examples):
+On each acquisition machine, find the IP address and the UID/GID of the user
+that runs TestbenchDAQ. For example, on `wentelteef`:
+
+```bash
+hostname
+hostname -I
+id -u
+id -g
+```
+
+Use those real values below. If the TestbenchDAQ user is UID/GID `1000`, give
+that user ownership of the server folders:
+
+```bash
+sudo chown 1000:1000 /srv/testbenchdaq/wentelteef
+sudo chown 1000:1000 /srv/testbenchdaq/knarskast
+sudo chmod 2775 /srv/testbenchdaq/wentelteef /srv/testbenchdaq/knarskast
+```
+
+Edit `/etc/exports` on the server with `sudoedit /etc/exports` and add one line
+per acquisition machine. Replace the example IP addresses with the values from
+`hostname -I` above:
 
 ```text
 /srv/testbenchdaq/wentelteef 192.168.0.50(rw,sync,no_subtree_check)
 /srv/testbenchdaq/knarskast 192.168.0.51(rw,sync,no_subtree_check)
 ```
 
-Apply the exports with `sudo exportfs -ra`. On each acquisition machine,
-install `nfs-common`, create `/mnt/testbench-results`, and mount its own export.
-Persist the mount in `/etc/fstab` with `_netdev`; do not use `nofail`, because
-a missing mount must prevent a measurement from starting.
+Apply and inspect the exports:
+
+```bash
+sudo exportfs -ra
+sudo exportfs -v
+sudo systemctl enable --now nfs-server
+```
+
+The `exportfs -v` output must show both paths and the correct client IP
+addresses. If UFW is enabled, allow NFS from only the acquisition machines.
+
+### Mount storage on `wentelteef`
+
+Run these commands on `wentelteef`, not on the server:
+
+```bash
+sudo apt update
+sudo apt install nfs-common
+sudo mkdir -p /mnt/testbench-results
+sudo mount -t nfs4 \
+  192.168.0.189:/srv/testbenchdaq/wentelteef \
+  /mnt/testbench-results
+```
+
+Verify that it is truly mounted and writable as the normal operator user:
+
+```bash
+mountpoint /mnt/testbench-results
+findmnt -T /mnt/testbench-results
+touch /mnt/testbench-results/test-write
+rm /mnt/testbench-results/test-write
+```
+
+Make it persistent across reboot by adding exactly this line to
+`/etc/fstab` on `wentelteef`:
 
 ```text
 192.168.0.189:/srv/testbenchdaq/wentelteef /mnt/testbench-results nfs4 rw,hard,_netdev,x-systemd.requires=network-online.target 0 0
 ```
+
+Then test it without rebooting:
+
+```bash
+sudo mount -a
+mountpoint /mnt/testbench-results
+```
+
+### Mount storage on `knarskast`
+
+Repeat the same commands on `knarskast`, changing only the exported folder:
+
+```bash
+sudo apt update
+sudo apt install nfs-common
+sudo mkdir -p /mnt/testbench-results
+sudo mount -t nfs4 \
+  192.168.0.189:/srv/testbenchdaq/knarskast \
+  /mnt/testbench-results
+```
+
+Its `/etc/fstab` line is:
+
+```text
+192.168.0.189:/srv/testbenchdaq/knarskast /mnt/testbench-results nfs4 rw,hard,_netdev,x-systemd.requires=network-online.target 0 0
+```
+
+### Configure TestbenchDAQ
 
 Each machine uses a matching configuration:
 
@@ -45,6 +130,36 @@ Before hardware is commanded, TestbenchDAQ verifies that `output_root` is
 writable NFS/NFSv4 storage. For a deliberately local run, an operator may use
 `--allow-local-output`; the manifest prominently records that override. The
 option is never persisted in `config.json`.
+
+### Troubleshooting: `access denied by server while mounting`
+
+Successful `ping` only proves the machines can reach each other. This mount
+error means the server did not authorize the acquisition machine's IP address
+for that exported path. On the **server**, run:
+
+```bash
+sudo exportfs -v
+sudo cat /etc/exports
+sudo systemctl status nfs-server --no-pager
+```
+
+On the **acquisition machine**, obtain the exact IPv4 address that the server
+sees:
+
+```bash
+ip -4 addr show
+```
+
+Ensure that exact address appears beside the correct path in `/etc/exports`.
+After any `/etc/exports` change, run `sudo exportfs -ra` on the server, then
+retry the mount. For diagnosis only, the server can list its exports with:
+
+```bash
+showmount -e 192.168.0.189
+```
+
+Do not use a broad `*(rw,...)` export as a permanent fix; authorize each test
+machine explicitly.
 
 ## Run the portal with Docker Compose
 
