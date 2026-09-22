@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import csv
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +26,18 @@ class SessionIndex:
         if not self.root.is_dir():
             return []
         return [self.machine_summary(path.name) for path in sorted(self.root.iterdir()) if path.is_dir() and _MACHINE_NAME.fullmatch(path.name)]
+
+    def overview(self) -> dict[str, Any]:
+        usage = shutil.disk_usage(self.root)
+        return {
+            "storage": {
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "free_bytes": usage.free,
+                "free_percent": round((usage.free / usage.total) * 100, 1) if usage.total else 0,
+            },
+            "machines": self.machines(),
+        }
 
     def machine_summary(self, machine: str) -> dict[str, Any]:
         directory = self._machine_directory(machine)
@@ -109,6 +122,70 @@ class SessionIndex:
         if not points:
             raise PortalError("CSV contains no numeric points.")
         return {"path": relative_path, "x_label": header[0], "y_label": header[1], "points": points}
+
+    def chart(self, machine: str, session_id: str, relative_path: str, columns: list[str], start_s: float | None, end_s: float | None, buckets: int) -> dict[str, Any]:
+        """Return min/max envelopes for the requested visible CSV time window."""
+        if not 100 <= buckets <= 4_000:
+            raise PortalError("buckets must be between 100 and 4000.")
+        path = self.artifact(machine, session_id, relative_path)
+        if path.suffix.lower() != ".csv":
+            raise PortalError("Only CSV files can be charted.")
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                header = reader.fieldnames or []
+                if len(header) < 2:
+                    raise PortalError("CSV needs a time column and value columns.")
+                time_column, available = header[0], header[1:]
+                first = next(reader, None)
+                if first is None:
+                    raise PortalError("CSV contains no data.")
+                origin = self._csv_time(first[time_column], time_column)
+                maximum = origin
+                for row in reader:
+                    try:
+                        maximum = self._csv_time(row[time_column], time_column)
+                    except (KeyError, TypeError, ValueError):
+                        continue
+        except (OSError, UnicodeError, csv.Error) as exc:
+            raise PortalError(f"Could not read CSV: {exc}") from exc
+        selected = [column for column in columns if column in available]
+        lower = origin if start_s is None else max(origin, origin + start_s)
+        upper = maximum if end_s is None else min(maximum, origin + end_s)
+        if upper <= lower:
+            upper = maximum if maximum > origin else origin + 1
+        width = (upper - lower) / buckets
+        envelopes: dict[str, list[list[float | None]]] = {column: [[float("inf"), float("-inf")] for _ in range(buckets)] for column in selected}
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.DictReader(handle)
+                for row in reader:
+                    try:
+                        timestamp = self._csv_time(row[time_column], time_column)
+                    except (KeyError, TypeError, ValueError):
+                        continue
+                    if timestamp < lower or timestamp > upper:
+                        continue
+                    bucket = min(buckets - 1, int((timestamp - lower) / width))
+                    for column in selected:
+                        try:
+                            value = float(row[column])
+                        except (KeyError, TypeError, ValueError):
+                            continue
+                        envelopes[column][bucket][0] = min(envelopes[column][bucket][0], value)
+                        envelopes[column][bucket][1] = max(envelopes[column][bucket][1], value)
+        except (OSError, UnicodeError, csv.Error) as exc:
+            raise PortalError(f"Could not read CSV: {exc}") from exc
+        series = []
+        for column, values in envelopes.items():
+            points = [[round((lower + (index + 0.5) * width) - origin, 6), low, high] for index, (low, high) in enumerate(values) if low != float("inf")]
+            series.append({"name": column, "points": points})
+        return {"path": relative_path, "time_column": time_column, "available_columns": available, "start_s": lower - origin, "end_s": upper - origin, "series": series}
+
+    @staticmethod
+    def _csv_time(value: str, name: str) -> float:
+        numeric = float(value)
+        return numeric / 1_000_000 if name.endswith("_us") else numeric
 
     def archive_files(self, machine: str, session_id: str) -> list[tuple[Path, str]]:
         """Return safe files to include in a whole-session archive."""

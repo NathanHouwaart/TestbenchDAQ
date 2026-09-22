@@ -34,6 +34,13 @@ class PortalTests(unittest.TestCase):
         summary = self.index.machine_summary("wentelteef")
         self.assertEqual(summary["active_session"]["live_status"]["phase"], "measuring")
 
+    def test_overview_and_chart_envelope(self) -> None:
+        overview = self.index.overview()
+        self.assertEqual(overview["machines"][0]["machine"], "wentelteef")
+        chart = self.index.chart("wentelteef", "session-1", "run_01/signals/gator/signal.csv", ["value_fm"], None, None, 100)
+        self.assertEqual(chart["available_columns"], ["value_fm"])
+        self.assertEqual(len(chart["series"][0]["points"]), 3)
+
     def test_artifact_cannot_escape_session(self) -> None:
         with self.assertRaises(PortalError):
             self.index.artifact("wentelteef", "session-1", "../../outside")
