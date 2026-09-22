@@ -54,6 +54,54 @@ tbdaq --config config.json --mode prognostic --run-until-stopped \
 
 Press Ctrl+C once to finish the active run cleanly. Its raw data and manifest are retained and the session status becomes `interrupted`. Do not kill the process or remove USB devices while it is stopping an enDAQ.
 
+### Worked example: a 30-run Gator test on `wentelteef`
+
+After the NFS mount has been configured, `wentelteef` writes directly to the
+server through `/mnt/testbench-results`. The following test captures Gator
+channel 1 at 5 kHz, uses full scale 9, records each run for 120 seconds, and
+starts runs every 240 seconds. It has 30 runs, so its planned duration is just
+under two hours, plus any acquisition cleanup overhead.
+
+Run this on **wentelteef** from the repository directory:
+
+```bash
+python3 main.py \
+  --machine-name wentelteef \
+  --output-root /mnt/testbench-results \
+  --gator \
+  --gator-channel 1 \
+  --gator-fullscale 9 \
+  --gator-samplerate 5000 \
+  --mode prognostic \
+  --run-count 30 \
+  --run-duration-s 120 \
+  --run-period-s 240 \
+  --name test-skf6204-22-09-2026
+```
+
+Do **not** add `--allow-local-output` for this normal server-backed run. The
+program first verifies that `/mnt/testbench-results` is writable NFS storage,
+then creates the session directory below the `wentelteef` export on the server.
+
+The session name must begin with a letter or number. In particular,
+`--name -test-skf6204-22-09-2026` is invalid because the leading `-` looks like
+another command-line option and is not allowed in a session name.
+
+If this should run indefinitely rather than exactly 30 times, replace:
+
+```text
+--run-count 30
+```
+
+with:
+
+```text
+--run-until-stopped
+```
+
+`--run-count` and `--run-until-stopped` cannot be used together. Stop an
+unlimited run with Ctrl+C; TestbenchDAQ cleans up the active run before exiting.
+
 ## Store data elsewhere
 
 Set `output_root` to a writable NFS/NFSv4 mount. For a server on the same subnet, mount its NFS share on the Linux acquisition host first, then make that mount the output root:

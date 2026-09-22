@@ -126,6 +126,9 @@ Each machine uses a matching configuration:
 }
 ```
 
+For a complete `wentelteef` Gator command-line example using this mount, see
+[the user manual's worked run example](user-manual.md#worked-example-a-30-run-gator-test-on-wentelteef).
+
 Before hardware is commanded, TestbenchDAQ verifies that `output_root` is
 writable NFS/NFSv4 storage. For a deliberately local run, an operator may use
 `--allow-local-output`; the manifest prominently records that override. The
