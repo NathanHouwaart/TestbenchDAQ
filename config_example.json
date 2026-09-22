@@ -4,6 +4,7 @@
   "mode": "diagnostic",
   "output_root": "./csv-output",
   "run_count": 1,
+  "_run_count_comment": "For unlimited prognostic acquisition, set run_count to null (or use --run-until-stopped).",
   "run_duration_s": 30,
   "run_period_s": null,
   "missed_start_tolerance_s": 2.0,

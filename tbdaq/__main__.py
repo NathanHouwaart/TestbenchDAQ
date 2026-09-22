@@ -119,7 +119,10 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
     _set_if_not_none(values, "mode", args.mode)
     _set_if_not_none(values, "name", args.name)
     _set_if_not_none(values, "output_root", args.output_root)
-    _set_if_not_none(values, "run_count", args.run_count)
+    if args.run_until_stopped:
+        values["run_count"] = None
+    else:
+        _set_if_not_none(values, "run_count", args.run_count)
     if args.manual:
         values["run_duration_s"] = None
     else:
@@ -182,7 +185,13 @@ def _make_parser() -> argparse.ArgumentParser:
     parser.add_argument("--name", metavar="NAME", help="Human-readable session name prefix")
     parser.add_argument("--mode", choices=("diagnostic", "prognostic"))
     parser.add_argument("--output-root", metavar="DIR")
-    parser.add_argument("--run-count", type=int, metavar="N")
+    run_limit = parser.add_mutually_exclusive_group()
+    run_limit.add_argument("--run-count", type=int, metavar="N")
+    run_limit.add_argument(
+        "--run-until-stopped",
+        action="store_true",
+        help="Repeat prognostic runs until Ctrl+C is pressed",
+    )
     duration = parser.add_mutually_exclusive_group()
     duration.add_argument("--run-duration-s", type=float, metavar="SECONDS")
     duration.add_argument(

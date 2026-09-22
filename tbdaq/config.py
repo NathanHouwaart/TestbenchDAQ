@@ -52,7 +52,8 @@ class SessionConfig:
     name: Optional[str] = None
     mode: str = "diagnostic"
     output_root: str = "./csv-output"
-    run_count: int = 1
+    # None means a prognostic session continues until the operator interrupts it.
+    run_count: Optional[int] = 1
     run_duration_s: Optional[float] = None
     run_period_s: Optional[float] = None
     missed_start_tolerance_s: float = 2.0
@@ -84,8 +85,12 @@ class SessionConfig:
             raise ConfigError("mode must be 'diagnostic' or 'prognostic'.")
         if not self.output_root.strip():
             raise ConfigError("output_root must not be empty.")
-        if self.run_count < 1:
-            raise ConfigError("run_count must be >= 1.")
+        if self.run_count is not None and (
+            not isinstance(self.run_count, int) or isinstance(self.run_count, bool)
+        ):
+            raise ConfigError("run_count must be an integer or null.")
+        if self.run_count is not None and self.run_count < 1:
+            raise ConfigError("run_count must be >= 1 when provided.")
         if self.run_duration_s is not None and self.run_duration_s <= 0:
             raise ConfigError("run_duration_s must be > 0 when provided.")
         if self.run_period_s is not None and self.run_period_s <= 0:

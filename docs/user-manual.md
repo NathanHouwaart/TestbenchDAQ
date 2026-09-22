@@ -1,0 +1,90 @@
+# TestbenchDAQ user manual
+
+TestbenchDAQ coordinates a PhotonFirst Gator FBG interrogator and an enDAQ recorder from one command-line program. It runs on the Linux computer physically connected to the instruments. The Gator vendor runtime is supplied for Linux/AArch64, so Windows and macOS are not supported.
+
+## Before you start
+
+You need Python 3.11+, the PhotonFirst public GTR C++ API for the target computer, and (when using enDAQ) the recorder connected by USB. Keep the vendor GTR library outside this repository: it is a separate dependency and may have redistribution terms.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+cmake -S gator_recorder -B gator_recorder/build \
+  -DGTR_API_DIR=/path/to/public_gtr_api/raspberry-pi4
+cmake --build gator_recorder/build
+```
+
+Follow the README's **Install** section for USB permissions and enDAQ mount setup, then verify `tbdaq --help`.
+
+## Configure a bench
+
+```bash
+cp config_example.json config.json
+tbdaq --config config.json show-config
+```
+
+Enable `gator`, `endaq`, or both. For Gator, set `library_path` to the vendor shared-library directory and confirm `binary_path` points to the compiled helper. For enDAQ, optionally pin `serial`, `model`, and `mount_path`; otherwise exactly one discovered recorder is required. Inspect its configurable channels with `tbdaq --config config.json endaq-info`.
+
+Relative paths are resolved relative to `config.json`. Check their effective absolute values using `show-config` before an unattended test.
+
+## Run a measurement
+
+A diagnostic run is exactly one measurement:
+
+```bash
+tbdaq --config config.json --mode diagnostic --run-duration-s 30
+tbdaq --config config.json --mode diagnostic --manual
+```
+
+A prognostic session repeats a schedule. `run_period_s` is start-to-start, so it must include enough time for enDAQ stop, remount, and verified offload.
+
+```bash
+tbdaq --config config.json --mode prognostic \
+  --run-count 12 --run-duration-s 60 --run-period-s 300
+```
+
+For unlimited timed prognostic acquisition, set `"run_count": null` in the configuration or use:
+
+```bash
+tbdaq --config config.json --mode prognostic --run-until-stopped \
+  --run-duration-s 60 --run-period-s 300
+```
+
+Press Ctrl+C once to finish the active run cleanly. Its raw data and manifest are retained and the session status becomes `interrupted`. Do not kill the process or remove USB devices while it is stopping an enDAQ.
+
+## Store data elsewhere
+
+Set `output_root` to any writable directory. For a server on the same subnet, mount a network share on the Linux acquisition host first, then make that mount the output root:
+
+```json
+{
+  "output_root": "/mnt/testbench-results"
+}
+```
+
+For NFS, an administrator can mount an exported directory (replace placeholders):
+
+```bash
+sudo mkdir -p /mnt/testbench-results
+sudo mount -t nfs server.example:/exports/testbench /mnt/testbench-results
+```
+
+For SMB/CIFS, install the distribution's CIFS utilities and use a root-readable credentials file, rather than putting a password on the command line. For unattended use, configure an `/etc/fstab` or systemd mount with network ordering, reconnect handling, and the acquisition user's UID/GID.
+
+Before a real run, ensure the share is mounted and writable as the same user running TestbenchDAQ. A disconnected network share can make acquisition fail or block during writes. A local disk is safer as the primary destination; replicate completed session directories to the server afterward for the most robust setup.
+
+## Find results and recover safely
+
+Each unique session directory contains `session_manifest.json` (status and configuration), `session.log`, `run_XX/raw/` (raw files), `run_XX/signals/` (CSV exports), and `signal_export_map.csv`. Create an offline plot with:
+
+```bash
+.venv/bin/python scripts/plot_session.py /path/to/SESSION_ID
+```
+
+If enDAQ may still be recording after an interruption, use `tbdaq --config config.json endaq-stop` and wait for it to remount. Keep `delete_after_verified_offload` disabled until host storage and the verified-offload workflow have been validated.
+
+## Publishing on GitHub
+
+Review `git status` before publishing. Keep `config.json`, acquired data, vendor libraries, and build products out of Git, choose a license you are authorized to apply, and document that the Gator runtime is an external Linux-only prerequisite. The existing `.gitignore` already excludes the local config, output directory, virtual environments, and native build directory.

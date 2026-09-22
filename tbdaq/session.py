@@ -117,7 +117,11 @@ class Session:
             base_wall = self._clock()
             base_monotonic = self._monotonic()
 
-            for run_number in range(1, self._config.run_count + 1):
+            run_number = 1
+            while (
+                self._config.run_count is None
+                or run_number <= self._config.run_count
+            ):
                 period = self._config.run_period_s or 0.0
                 planned_monotonic = base_monotonic + ((run_number - 1) * period)
                 planned_wall = base_wall + ((run_number - 1) * period)
@@ -180,6 +184,7 @@ class Session:
                         "failed",
                         f"{run_record['run_id']} was partial while allow_partial is false.",
                     )
+                run_number += 1
 
             self._process_deferred_runs()
             statuses = [run["status"] for run in self._manifest["runs"]]

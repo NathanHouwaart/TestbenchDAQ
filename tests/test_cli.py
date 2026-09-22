@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import unittest
 
-from tbdaq.__main__ import _ConsoleFormatter, _manifest_messages
+from tbdaq.__main__ import _ConsoleFormatter, _build_config, _make_parser, _manifest_messages
 
 
 class CliTests(unittest.TestCase):
@@ -31,6 +31,13 @@ class CliTests(unittest.TestCase):
         error = logging.LogRecord("test", logging.ERROR, "", 0, "broken", (), None)
         self.assertTrue(formatter.format(warning).startswith("\033[33m"))
         self.assertTrue(formatter.format(error).startswith("\033[31m"))
+
+    def test_run_until_stopped_sets_an_unlimited_count(self) -> None:
+        args = _make_parser().parse_args([
+            "--mode", "prognostic", "--run-until-stopped",
+            "--run-duration-s", "1", "--run-period-s", "2", "--gator",
+        ])
+        self.assertIsNone(_build_config(args).run_count)
 
 
 if __name__ == "__main__":

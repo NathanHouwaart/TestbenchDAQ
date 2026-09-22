@@ -18,6 +18,9 @@ serialization are subsequent phases.
 
 Windows is not currently supported.
 
+See [docs/user-manual.md](docs/user-manual.md) for the operator-focused setup
+and run guide.
+
 ## Install
 
 Create a virtual environment and install the application:
@@ -187,6 +190,20 @@ deferred until all scheduled acquisitions finish, so processing cannot delay a
 later start. Remount/offload time is scheduling overhead in addition to
 `run_duration_s`; exact lateness is retained in the manifest.
 
+### Unlimited prognostic mode
+
+For repeated timed runs until an operator stops the session, set `run_count`
+to `null` in the JSON configuration, or use `--run-until-stopped`:
+
+```bash
+tbdaq --config config.json --mode prognostic --run-until-stopped \
+  --run-duration-s 60 --run-period-s 300
+```
+
+Press Ctrl+C to stop. The active run is cleaned up and retained; the session
+manifest is marked `interrupted`. This option is limited to prognostic mode;
+diagnostic mode remains exactly one timed or manual run.
+
 Before `RecStart`, TestbenchDAQ flushes pending writes and cleanly unmounts the
 enDAQ filesystem. The manifest records separate durations for clean unmount,
 start command, USB disconnect, stop command, remount, and offload/verification.
@@ -317,6 +334,9 @@ csv-output/
 
 The manifest is replaced atomically after state changes so interrupted
 sessions retain useful status information.
+
+`output_root` can be any writable local path, including a mounted network
+share. The user manual includes NFS/SMB examples and operational precautions.
 
 The `signals` directory is intentionally not named `isa`: the current output
 is not yet a complete ISA-PHM package.

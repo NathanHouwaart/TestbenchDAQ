@@ -59,6 +59,31 @@ class ConfigTests(unittest.TestCase):
                 base_dir=self.base,
             )
 
+    def test_prognostic_accepts_unlimited_run_count(self) -> None:
+        config = session_config_from_mapping(
+            {
+                "mode": "prognostic",
+                "run_count": None,
+                "run_duration_s": 1,
+                "run_period_s": 2,
+                "gator": {"enabled": True},
+            },
+            base_dir=self.base,
+        )
+        self.assertIsNone(config.run_count)
+
+        with self.assertRaisesRegex(ConfigError, "exactly one run"):
+            session_config_from_mapping(
+                {"run_count": None, "gator": {"enabled": True}},
+                base_dir=self.base,
+            )
+
+        with self.assertRaisesRegex(ConfigError, "integer or null"):
+            session_config_from_mapping(
+                {"run_count": "forever", "gator": {"enabled": True}},
+                base_dir=self.base,
+            )
+
     def test_prognostic_requires_valid_period(self) -> None:
         with self.assertRaisesRegex(ConfigError, "requires run_period_s"):
             session_config_from_mapping(
