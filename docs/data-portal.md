@@ -200,6 +200,59 @@ rm /mnt/testbench-results/test-write
 
 No unmount or server restart is needed after changing ownership or mode.
 
+### Network speed and long-running tests
+
+Gator data is written continuously to `output_root`. If NFS cannot sustain the
+CSV write rate, the native recorder's two 4,096-sample buffers eventually fill
+and its acquisition callback waits for storage. The application does not drop
+files silently, but a blocked callback can lead to delayed or missing samples
+from the vendor device. A slow or disconnected `hard` NFS mount can also make a
+running process wait in filesystem I/O rather than fail immediately.
+
+enDAQ behaves differently: it records to its own device during the measurement
+window, then copies and SHA-256 verifies the IDE file to NFS after stopping. A
+slow connection therefore extends the cleanup/offload period. In prognostic
+mode it can make the next planned run late; the default `abort` policy stops
+the session rather than silently drifting the schedule.
+
+Use wired Gigabit Ethernet, not Wi-Fi, for acquisition storage. Test both the
+network link and the actual NFS mount before a long test. On the server, start
+an `iperf3` listener:
+
+```bash
+sudo apt install iperf3
+iperf3 -s
+```
+
+On the acquisition machine, test the link:
+
+```bash
+sudo apt install iperf3
+iperf3 -c 192.168.0.189
+```
+
+Then test real NFS write throughput. This creates a 1 GiB temporary file on
+the server export and removes it afterward:
+
+```bash
+dd if=/dev/zero of=/mnt/testbench-results/nfs-throughput-test.bin \
+  bs=16M count=64 conv=fdatasync status=progress
+rm /mnt/testbench-results/nfs-throughput-test.bin
+```
+
+Finally, perform a short Gator trial with the intended sample rate and inspect
+the raw CSV row count. At 5 kHz for 120 seconds, it should be close to 600,000
+data rows (plus one header row):
+
+```bash
+wc -l /mnt/testbench-results/SESSION_ID/run_01/raw/gator/gator_channel.csv
+```
+
+The sustained measured NFS write rate should comfortably exceed the Gator CSV
+rate; leave at least a two-times margin. If it does not, lower the Gator sample
+rate, improve the wired network/server disk, or change the acquisition design
+to use a suitable local high-speed buffer.
+
 ## Run the portal with Docker Compose
 
 Install Docker Engine and the Docker Compose plugin on the server. The portal
