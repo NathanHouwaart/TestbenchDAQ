@@ -39,6 +39,10 @@ class CliTests(unittest.TestCase):
         ])
         self.assertIsNone(_build_config(args).run_count)
 
+    def test_local_output_override_is_explicit(self) -> None:
+        args = _make_parser().parse_args(["--allow-local-output", "--gator"])
+        self.assertTrue(args.allow_local_output)
+
 
 if __name__ == "__main__":
     unittest.main()

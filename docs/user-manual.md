@@ -56,7 +56,7 @@ Press Ctrl+C once to finish the active run cleanly. Its raw data and manifest ar
 
 ## Store data elsewhere
 
-Set `output_root` to any writable directory. For a server on the same subnet, mount a network share on the Linux acquisition host first, then make that mount the output root:
+Set `output_root` to a writable NFS/NFSv4 mount. For a server on the same subnet, mount its NFS share on the Linux acquisition host first, then make that mount the output root:
 
 ```json
 {
@@ -71,9 +71,7 @@ sudo mkdir -p /mnt/testbench-results
 sudo mount -t nfs server.example:/exports/testbench /mnt/testbench-results
 ```
 
-For SMB/CIFS, install the distribution's CIFS utilities and use a root-readable credentials file, rather than putting a password on the command line. For unattended use, configure an `/etc/fstab` or systemd mount with network ordering, reconnect handling, and the acquisition user's UID/GID.
-
-Before a real run, ensure the share is mounted and writable as the same user running TestbenchDAQ. A disconnected network share can make acquisition fail or block during writes. A local disk is safer as the primary destination; replicate completed session directories to the server afterward for the most robust setup.
+Before a real run, ensure the share is mounted and writable as the same user running TestbenchDAQ. A disconnected network share causes the program to refuse to start rather than accidentally filling local storage. For a deliberately local exception, provide `--allow-local-output` on the command line; the resulting manifest is marked `local_override`.
 
 ## Find results and recover safely
 

@@ -21,6 +21,9 @@ Windows is not currently supported.
 See [docs/user-manual.md](docs/user-manual.md) for the operator-focused setup
 and run guide.
 
+For central NFS storage and the Docker-hosted, read-only React data portal, see
+[docs/data-portal.md](docs/data-portal.md).
+
 ## Install
 
 Create a virtual environment and install the application:
@@ -335,8 +338,10 @@ csv-output/
 The manifest is replaced atomically after state changes so interrupted
 sessions retain useful status information.
 
-`output_root` can be any writable local path, including a mounted network
-share. The user manual includes NFS/SMB examples and operational precautions.
+`output_root` must normally be writable NFS/NFSv4 storage. An operator may use
+`--allow-local-output` for a deliberate local exception; that override is
+prominently recorded in the manifest. See the data-portal guide for the NFS
+deployment and Docker-hosted read-only browser.
 
 The `signals` directory is intentionally not named `isa`: the current output
 is not yet a complete ISA-PHM package.

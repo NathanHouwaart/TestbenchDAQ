@@ -50,6 +50,7 @@ class EndaqConfig:
 @dataclass
 class SessionConfig:
     name: Optional[str] = None
+    machine_name: Optional[str] = None
     mode: str = "diagnostic"
     output_root: str = "./csv-output"
     # None means a prognostic session continues until the operator interrupts it.
@@ -81,6 +82,10 @@ class SessionConfig:
                 raise ConfigError(
                     "name must be 1-80 characters using letters, numbers, spaces, '.', '_' or '-'."
                 )
+        if self.machine_name is not None:
+            self.machine_name = self.machine_name.strip().lower()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.machine_name):
+                raise ConfigError("machine_name must be a hostname-style value of up to 63 characters.")
         if self.mode not in {"diagnostic", "prognostic"}:
             raise ConfigError("mode must be 'diagnostic' or 'prognostic'.")
         if not self.output_root.strip():
@@ -164,7 +169,7 @@ class SessionConfig:
 
 
 _SESSION_KEYS = {
-    "name", "mode", "output_root", "run_count", "run_duration_s", "run_period_s",
+    "name", "machine_name", "mode", "output_root", "run_count", "run_duration_s", "run_period_s",
     "missed_start_tolerance_s", "missed_start_policy", "allow_partial", "gator", "endaq",
 }
 _GATOR_KEYS = {

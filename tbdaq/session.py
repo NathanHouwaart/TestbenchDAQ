@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from tbdaq.config import SessionConfig
 from tbdaq.isa_export import ExportWindow, SignalFile, write_signal_map
+from tbdaq.storage import StorageInfo, validate_output_storage
 
 _LOG = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class Session:
         sleep: Callable[[float], None] = time.sleep,
         input_fn: Callable[[str], str] = input,
         session_id: Optional[str] = None,
+        allow_local_output: bool = False,
+        storage_validator: Callable[..., StorageInfo] = validate_output_storage,
     ) -> None:
         config.validate()
         self._config = config
@@ -43,6 +46,9 @@ class Session:
         self._sleep = sleep
         self._input = input_fn
         self._interrupt_requested = False
+        self._storage = storage_validator(
+            Path(config.output_root), allow_local_output=allow_local_output
+        )
         self._session_id = session_id or _new_session_id(config.name)
         self._session_dir = Path(config.output_root) / self._session_id
         self._session_dir.mkdir(parents=True, exist_ok=False)
@@ -54,9 +60,10 @@ class Session:
             tuple[dict[str, Any], str, Any, Path, ExportWindow]
         ] = []
         self._manifest: dict[str, Any] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "application": "TestbenchDAQ",
             "name": config.name,
+            "machine_name": config.machine_name,
             "session_id": self._session_id,
             "session_dir": str(self._session_dir),
             "mode": config.mode,
@@ -65,6 +72,18 @@ class Session:
             "started_at_utc": _iso_utc(self._clock()),
             "ended_at_utc": None,
             "config": config.to_dict(),
+            "storage": {
+                "path": self._storage.path,
+                "mode": self._storage.mode,
+                "filesystem_type": self._storage.filesystem_type,
+                "free_bytes_at_start": self._storage.free_bytes,
+                "total_bytes": self._storage.total_bytes,
+            },
+            "live_status": {
+                "phase": "initializing",
+                "current_run": None,
+                "last_updated_utc": _iso_utc(self._clock()),
+            },
             "preflight": {},
             "runs": [],
             "artifacts": {
@@ -97,6 +116,7 @@ class Session:
     def run(self) -> dict[str, Any]:
         """Execute the session and always persist a terminal manifest."""
         try:
+            self._set_live_status("preflight")
             active = self._preflight()
             if not active:
                 return self._finish("aborted", "No enabled sensors passed preflight.")
@@ -113,7 +133,7 @@ class Session:
                 )
 
             self._manifest["status"] = "running"
-            self._write_manifest()
+            self._set_live_status("waiting")
             base_wall = self._clock()
             base_monotonic = self._monotonic()
 
@@ -171,7 +191,7 @@ class Session:
                         + "."
                     )
                 self._manifest["runs"].append(run_record)
-                self._write_manifest()
+                self._set_live_status("waiting")
 
                 if run_record["status"] in {"failed", "interrupted"}:
                     terminal = "interrupted" if run_record["status"] == "interrupted" else "failed"
@@ -229,6 +249,7 @@ class Session:
         schedule_warning: Optional[str],
         active_adapters: Mapping[str, Any],
     ) -> dict[str, Any]:
+        self._set_live_status("starting", run_number)
         run_id = f"run_{run_number:02d}"
         run_dir = self._session_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -312,6 +333,7 @@ class Session:
         measurement_start_monotonic = self._monotonic()
         record["measurement_window"]["start_utc"] = _iso_utc(measurement_start_wall)
         record["status"] = "measuring"
+        self._set_live_status("measuring", run_number)
         interrupted = False
 
         try:
@@ -323,6 +345,7 @@ class Session:
             interrupted = True
             record["errors"].append("Measurement interrupted by user.")
         finally:
+            self._set_live_status("stopping", run_number)
             stop_request_wall = self._clock()
             record["measurement_window"]["stop_requested_utc"] = _iso_utc(stop_request_wall)
             record["measurement_window"]["actual_duration_s"] = round(
@@ -365,6 +388,7 @@ class Session:
         }
 
         processing_incomplete = False
+        self._set_live_status("processing", run_number)
         for family, adapter in started.items():
             adapter_record = record["adapters"][family]
             if self._config.mode == "prognostic" and family == "endaq":
@@ -586,8 +610,16 @@ class Session:
         self._manifest["status"] = status
         self._manifest["abort_reason"] = reason
         self._manifest["ended_at_utc"] = _iso_utc(self._clock())
-        self._write_manifest()
+        self._set_live_status(status)
         return self._manifest
+
+    def _set_live_status(self, phase: str, run_number: Optional[int] = None) -> None:
+        self._manifest["live_status"] = {
+            "phase": phase,
+            "current_run": run_number,
+            "last_updated_utc": _iso_utc(self._clock()),
+        }
+        self._write_manifest()
 
     def _write_manifest(self) -> None:
         temporary = self._manifest_path.with_suffix(".json.tmp")

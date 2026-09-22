@@ -18,6 +18,11 @@ csv-output/
 data/
 *.log
 
+# Portal deployment secrets
+portal/auth/.htpasswd
+portal/web/node_modules/
+portal/web/dist/
+
 # Editor and operating-system files
 .vscode/
 .idea/

@@ -1,8 +1,9 @@
 {
   "_comment": "Copy to config.json. Enable at least one sensor before running.",
   "name": null,
+  "machine_name": "wentelteef",
   "mode": "diagnostic",
-  "output_root": "./csv-output",
+  "output_root": "/mnt/testbench-results",
   "run_count": 1,
   "_run_count_comment": "For unlimited prognostic acquisition, set run_count to null (or use --run-until-stopped).",
   "run_duration_s": 30,

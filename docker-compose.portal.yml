@@ -1,0 +1,25 @@
+services:
+  portal-api:
+    build:
+      context: .
+      dockerfile: portal/api/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - /srv/testbenchdaq:/data:ro
+    networks: [portal]
+
+  portal-web:
+    build:
+      context: .
+      dockerfile: portal/web/Dockerfile
+    depends_on: [portal-api]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./portal/auth:/etc/nginx/auth:ro
+    networks: [portal]
+
+networks:
+  portal:
+    driver: bridge

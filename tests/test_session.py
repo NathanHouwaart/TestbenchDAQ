@@ -9,6 +9,7 @@ from pathlib import Path
 from tbdaq.config import EndaqConfig, GatorConfig, SessionConfig
 from tbdaq.isa_export import ExportWindow, SignalFile
 from tbdaq.session import Session
+from tbdaq.storage import StorageInfo
 
 
 @dataclass
@@ -131,6 +132,13 @@ class SessionTests(unittest.TestCase):
             sleep=self.clock.sleep,
             input_fn=input_fn,
             session_id=session_id,
+            storage_validator=lambda *_args, **_kwargs: StorageInfo(
+                path=str(self.root),
+                mode="nfs",
+                filesystem_type="nfs4",
+                free_bytes=10_000_000,
+                total_bytes=20_000_000,
+            ),
         )
 
     def test_timed_run_uses_common_ready_window_and_succeeds(self) -> None:
@@ -156,6 +164,8 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(gator.start_calls, 1)
         self.assertEqual(gator.stop_calls, 1)
         self.assertTrue((self.root / "success" / "session_manifest.json").is_file())
+        self.assertEqual(manifest["live_status"]["phase"], "success")
+        self.assertEqual(manifest["storage"]["mode"], "nfs")
 
     def test_strict_preflight_aborts_before_start(self) -> None:
         gator = FakeAdapter("gator", discovery_error="not connected")

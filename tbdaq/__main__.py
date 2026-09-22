@@ -118,6 +118,7 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
 
     _set_if_not_none(values, "mode", args.mode)
     _set_if_not_none(values, "name", args.name)
+    _set_if_not_none(values, "machine_name", args.machine_name)
     _set_if_not_none(values, "output_root", args.output_root)
     if args.run_until_stopped:
         values["run_count"] = None
@@ -183,8 +184,14 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", metavar="PATH", help="JSON configuration file")
     parser.add_argument("--name", metavar="NAME", help="Human-readable session name prefix")
+    parser.add_argument("--machine-name", metavar="NAME", help="Machine identity stored in the manifest")
     parser.add_argument("--mode", choices=("diagnostic", "prognostic"))
     parser.add_argument("--output-root", metavar="DIR")
+    parser.add_argument(
+        "--allow-local-output",
+        action="store_true",
+        help="Override the mandatory NFS output check for this run only",
+    )
     run_limit = parser.add_mutually_exclusive_group()
     run_limit.add_argument("--run-count", type=int, metavar="N")
     run_limit.add_argument(
@@ -309,7 +316,7 @@ def main(argv: list[str] | None = None) -> int:
 
         from tbdaq.session import Session
 
-        manifest = Session(config).run()
+        manifest = Session(config, allow_local_output=args.allow_local_output).run()
     except KeyboardInterrupt:
         print(_colored("Interrupted.", _ANSI_YELLOW, sys.stderr), file=sys.stderr)
         return 130
