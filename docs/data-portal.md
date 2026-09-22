@@ -366,12 +366,10 @@ The React frontend refreshes manifest status every five seconds. The API and
 containers expose only `GET` endpoints. Session files are served only after
 their paths have been checked to remain inside that machine's session folder.
 
-The **files** action lists session artifacts. CSV entries have a **graph**
-action that opens an interactive multi-channel chart. Drag to pan and use the
-mouse wheel or trackpad to zoom. The server returns only a min/max envelope
-for the visible time window, preserving peaks without sending an entire
-600,000-sample signal to the browser. Raw multi-column CSVs expose selectable
-numeric columns; processed signal CSVs select their signal automatically.
+Open a session to enter its file explorer. The left sidebar is a file tree;
+selecting a CSV opens its contents in the main area. CSVs are read in pages of
+250 rows, so viewing a file never loads an entire 600,000-sample recording.
+Use **All tests** to leave the explorer and return to the session list.
 
 The overview reports the total, used, and free space of the filesystem hosting
 the portal's data root. It warns below 20%/100 GiB free and is critical below

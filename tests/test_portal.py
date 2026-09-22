@@ -34,12 +34,15 @@ class PortalTests(unittest.TestCase):
         summary = self.index.machine_summary("wentelteef")
         self.assertEqual(summary["active_session"]["live_status"]["phase"], "measuring")
 
-    def test_overview_and_chart_envelope(self) -> None:
+    def test_overview_reports_discovered_machine(self) -> None:
         overview = self.index.overview()
         self.assertEqual(overview["machines"][0]["machine"], "wentelteef")
-        chart = self.index.chart("wentelteef", "session-1", "run_01/signals/gator/signal.csv", ["value_fm"], None, None, 100)
-        self.assertEqual(chart["available_columns"], ["value_fm"])
-        self.assertEqual(len(chart["series"][0]["points"]), 3)
+
+    def test_csv_preview_is_bounded_and_paginated(self) -> None:
+        page = self.index.csv_preview("wentelteef", "session-1", "run_01/signals/gator/signal.csv", offset=1, limit=1)
+        self.assertEqual(page["columns"], ["time_s", "value_fm"])
+        self.assertEqual(page["rows"], [["1", "3"]])
+        self.assertTrue(page["has_more"])
 
     def test_artifact_cannot_escape_session(self) -> None:
         with self.assertRaises(PortalError):
@@ -66,14 +69,11 @@ class PortalTests(unittest.TestCase):
         finally:
             portal_app.index = previous_index
 
-    def test_plot_samples_csv_and_session_download_is_zip(self) -> None:
+    def test_session_download_is_zip(self) -> None:
         previous_index = portal_app.index
         portal_app.index = self.index
         try:
             client = TestClient(portal_app.app)
-            plot = client.get("/api/machines/wentelteef/sessions/session-1/plot/run_01/signals/gator/signal.csv")
-            self.assertEqual(plot.status_code, 200)
-            self.assertEqual(plot.json()["points"], [[0.0, 1.0], [1.0, 3.0], [2.0, 5.0]])
             archive = client.get("/api/machines/wentelteef/sessions/session-1/download")
             self.assertEqual(archive.status_code, 200)
             self.assertTrue(archive.content.startswith(b"PK"))

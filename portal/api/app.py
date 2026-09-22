@@ -55,21 +55,15 @@ def artifacts(machine: str, session_id: str):
     return _not_found(lambda: index.artifacts(machine, session_id))
 
 
+@app.get("/api/machines/{machine}/sessions/{session_id}/csv-preview/{relative_path:path}")
+def csv_preview(machine: str, session_id: str, relative_path: str, offset: int = 0, limit: int = 250):
+    return _not_found(lambda: index.csv_preview(machine, session_id, relative_path, offset, limit))
+
+
 @app.get("/api/machines/{machine}/sessions/{session_id}/artifacts/{relative_path:path}")
 def artifact(machine: str, session_id: str, relative_path: str):
     path = _not_found(lambda: index.artifact(machine, session_id, relative_path))
     return FileResponse(path)
-
-
-@app.get("/api/machines/{machine}/sessions/{session_id}/plot/{relative_path:path}")
-def plot(machine: str, session_id: str, relative_path: str, max_points: int = 2_000):
-    return _not_found(lambda: index.plot(machine, session_id, relative_path, max_points))
-
-
-@app.get("/api/machines/{machine}/sessions/{session_id}/chart/{relative_path:path}")
-def chart(machine: str, session_id: str, relative_path: str, columns: str = "", start_s: float | None = None, end_s: float | None = None, buckets: int = 1200):
-    selected = [value for value in columns.split(",") if value]
-    return _not_found(lambda: index.chart(machine, session_id, relative_path, selected, start_s, end_s, buckets))
 
 
 class _QueueWriter(io.RawIOBase):

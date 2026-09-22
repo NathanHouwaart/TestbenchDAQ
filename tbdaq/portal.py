@@ -5,6 +5,7 @@ import json
 import re
 import csv
 import shutil
+import itertools
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,23 @@ class SessionIndex:
                     "size_bytes": candidate.stat().st_size,
                 })
         return sorted(files, key=lambda item: item["path"])
+
+    def csv_preview(self, machine: str, session_id: str, relative_path: str, offset: int = 0, limit: int = 250) -> dict[str, Any]:
+        """Read a bounded page of a CSV without loading a recording into memory."""
+        if offset < 0 or not 1 <= limit <= 500:
+            raise PortalError("Invalid CSV page request.")
+        path = self.artifact(machine, session_id, relative_path)
+        if path.suffix.lower() != ".csv":
+            raise PortalError("Only CSV files can be previewed.")
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.reader(handle)
+                columns = next(reader)
+                rows = list(itertools.islice(reader, offset, offset + limit))
+                has_more = next(reader, None) is not None
+        except (OSError, UnicodeError, csv.Error, StopIteration) as exc:
+            raise PortalError(f"Could not read CSV: {exc}") from exc
+        return {"path": relative_path, "columns": columns, "rows": rows, "offset": offset, "limit": limit, "has_more": has_more}
 
     def plot(self, machine: str, session_id: str, relative_path: str, max_points: int = 2_000) -> dict[str, Any]:
         """Return an evenly sampled time/value CSV series for browser plotting."""
