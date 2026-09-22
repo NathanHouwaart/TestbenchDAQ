@@ -1,5 +1,6 @@
 import {defineConfig} from "vite";
 
-// The portal is served behind /MACHINE/machine-data/, not from a host root.
-// Relative assets keep that public prefix intact.
-export default defineConfig({base: "./"});
+// Every portal page lives under /data/. Assets must stay at that stable root:
+// a relative URL from /data/wentelteef/ would incorrectly become
+// /data/wentelteef/assets/ and be handled as a SPA page by the gateway.
+export default defineConfig({base: "/data/"});
