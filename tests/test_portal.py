@@ -22,6 +22,9 @@ class PortalTests(unittest.TestCase):
             "live_status": {"phase": "measuring", "current_run": 2}, "runs": [],
         }), encoding="utf-8")
         (self.session / "session.log").write_text("hello", encoding="utf-8")
+        signals = self.session / "run_01" / "signals" / "gator"
+        signals.mkdir(parents=True)
+        (signals / "signal.csv").write_text("time_s,value_fm\n0,1\n1,3\n2,5\n", encoding="utf-8")
         self.index = SessionIndex(self.root)
 
     def tearDown(self) -> None:
@@ -37,6 +40,7 @@ class PortalTests(unittest.TestCase):
 
     def test_artifacts_are_relative_to_the_session(self) -> None:
         self.assertEqual(self.index.artifacts("wentelteef", "session-1"), [
+            {"path": "run_01/signals/gator/signal.csv", "size_bytes": 32},
             {"path": "session.log", "size_bytes": 5},
             {"path": "session_manifest.json", "size_bytes": (self.session / "session_manifest.json").stat().st_size},
         ])
@@ -52,5 +56,19 @@ class PortalTests(unittest.TestCase):
                 "/api/machines/wentelteef/sessions/session-1/artifacts/%2E%2E%2Foutside"
             )
             self.assertEqual(response.status_code, 404)
+        finally:
+            portal_app.index = previous_index
+
+    def test_plot_samples_csv_and_session_download_is_zip(self) -> None:
+        previous_index = portal_app.index
+        portal_app.index = self.index
+        try:
+            client = TestClient(portal_app.app)
+            plot = client.get("/api/machines/wentelteef/sessions/session-1/plot/run_01/signals/gator/signal.csv")
+            self.assertEqual(plot.status_code, 200)
+            self.assertEqual(plot.json()["points"], [[0.0, 1.0], [1.0, 3.0], [2.0, 5.0]])
+            archive = client.get("/api/machines/wentelteef/sessions/session-1/download")
+            self.assertEqual(archive.status_code, 200)
+            self.assertTrue(archive.content.startswith(b"PK"))
         finally:
             portal_app.index = previous_index

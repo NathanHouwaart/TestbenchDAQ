@@ -365,6 +365,12 @@ The React frontend refreshes manifest status every five seconds. The API and
 containers expose only `GET` endpoints. Session files are served only after
 their paths have been checked to remain inside that machine's session folder.
 
+The **files** action lists session artifacts. CSV entries have a **graph**
+action that displays an evenly sampled preview (at most 2,000 points), so a
+browser never needs to load an entire 600,000-sample signal. **Download ZIP**
+streams every non-symlink file in the selected session as one archive; for
+large sessions, its network transfer can take some time.
+
 To update after pulling a new version, rerun the `docker compose ... up -d
 --build` command. Check the service logs with:
 

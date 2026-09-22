@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import os
+import io
+import queue
+import threading
+import zipfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from tbdaq.portal import PortalError, SessionIndex
 
@@ -50,3 +54,47 @@ def artifacts(machine: str, session_id: str):
 def artifact(machine: str, session_id: str, relative_path: str):
     path = _not_found(lambda: index.artifact(machine, session_id, relative_path))
     return FileResponse(path)
+
+
+@app.get("/api/machines/{machine}/sessions/{session_id}/plot/{relative_path:path}")
+def plot(machine: str, session_id: str, relative_path: str, max_points: int = 2_000):
+    return _not_found(lambda: index.plot(machine, session_id, relative_path, max_points))
+
+
+class _QueueWriter(io.RawIOBase):
+    def __init__(self, output: queue.Queue[bytes | None]) -> None:
+        self.output = output
+
+    def writable(self) -> bool:
+        return True
+
+    def write(self, data: bytes) -> int:
+        if data:
+            self.output.put(data)
+        return len(data)
+
+
+@app.get("/api/machines/{machine}/sessions/{session_id}/download")
+def download(machine: str, session_id: str):
+    files = _not_found(lambda: index.archive_files(machine, session_id))
+    output: queue.Queue[bytes | None] = queue.Queue(maxsize=8)
+
+    def build_archive() -> None:
+        try:
+            with zipfile.ZipFile(_QueueWriter(output), "w", zipfile.ZIP_DEFLATED) as archive:
+                for path, name in files:
+                    archive.write(path, name)
+        finally:
+            output.put(None)
+
+    threading.Thread(target=build_archive, daemon=True).start()
+
+    def stream():
+        while (chunk := output.get()) is not None:
+            yield chunk
+
+    safe_name = "".join(char if char.isalnum() or char in "-_." else "_" for char in session_id)
+    return StreamingResponse(
+        stream(), media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}.zip"'},
+    )

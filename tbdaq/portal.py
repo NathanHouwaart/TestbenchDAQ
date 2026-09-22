@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import csv
 from pathlib import Path
 from typing import Any
 
@@ -73,6 +74,48 @@ class SessionIndex:
                     "size_bytes": candidate.stat().st_size,
                 })
         return sorted(files, key=lambda item: item["path"])
+
+    def plot(self, machine: str, session_id: str, relative_path: str, max_points: int = 2_000) -> dict[str, Any]:
+        """Return an evenly sampled time/value CSV series for browser plotting."""
+        if not 100 <= max_points <= 10_000:
+            raise PortalError("max_points must be between 100 and 10000.")
+        path = self.artifact(machine, session_id, relative_path)
+        if path.suffix.lower() != ".csv":
+            raise PortalError("Only CSV signal files can be plotted.")
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.reader(handle)
+                header = next(reader)
+                rows = sum(1 for _ in reader)
+        except (OSError, UnicodeError, csv.Error, StopIteration) as exc:
+            raise PortalError(f"Could not read CSV: {exc}") from exc
+        if len(header) < 2:
+            raise PortalError("CSV needs a time column and a value column.")
+        step = max(1, (rows + max_points - 1) // max_points)
+        points: list[list[float]] = []
+        try:
+            with path.open("r", encoding="utf-8", newline="") as handle:
+                reader = csv.reader(handle)
+                next(reader)
+                for row_number, row in enumerate(reader):
+                    if row_number % step or len(row) < 2:
+                        continue
+                    try:
+                        points.append([float(row[0]), float(row[1])])
+                    except ValueError:
+                        continue
+        except (OSError, UnicodeError, csv.Error) as exc:
+            raise PortalError(f"Could not read CSV: {exc}") from exc
+        if not points:
+            raise PortalError("CSV contains no numeric points.")
+        return {"path": relative_path, "x_label": header[0], "y_label": header[1], "points": points}
+
+    def archive_files(self, machine: str, session_id: str) -> list[tuple[Path, str]]:
+        """Return safe files to include in a whole-session archive."""
+        return [
+            (self.artifact(machine, session_id, entry["path"]), entry["path"])
+            for entry in self.artifacts(machine, session_id)
+        ]
 
     def _machine_directory(self, machine: str) -> Path:
         if not _MACHINE_NAME.fullmatch(machine):
