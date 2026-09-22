@@ -7,6 +7,11 @@ const machineFromPath = () => {
   return match?.[1] || null;
 };
 
+const portalApi = () => {
+  const match = window.location.pathname.match(/^(\/[a-z0-9-]+\/machine-data)\/?/);
+  return match ? `${match[1]}/api` : "/api";
+};
+
 function App() {
   const [machine] = useState(machineFromPath());
   const [summary, setSummary] = useState(null);
@@ -19,8 +24,8 @@ function App() {
     const load = async () => {
       try {
         const [info, runs] = await Promise.all([
-          fetch(`/api/machines/${machine}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
-          fetch(`/api/machines/${machine}/sessions`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+          fetch(`${portalApi()}/machines/${machine}`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
+          fetch(`${portalApi()}/machines/${machine}/sessions`).then(r => r.ok ? r.json() : Promise.reject(r.status)),
         ]);
         setSummary(info); setSessions(runs); setError("");
       } catch { setError("The data portal could not load this machine."); }
@@ -30,7 +35,7 @@ function App() {
 
   if (error) return <main><h1>TestbenchDAQ data</h1><p>{error}</p></main>;
   const showArtifacts = async (sessionId) => {
-    const files = await fetch(`/api/machines/${machine}/sessions/${encodeURIComponent(sessionId)}/artifacts`).then(r => r.json());
+    const files = await fetch(`${portalApi()}/machines/${machine}/sessions/${encodeURIComponent(sessionId)}/artifacts`).then(r => r.json());
     setArtifacts(files.map(file => ({...file, sessionId})));
   };
   return <main>
