@@ -4,6 +4,90 @@ This deployment keeps instrument control on each acquisition machine. The
 server at `192.168.0.189` stores data and hosts a browser-only portal; it has
 no endpoint that can start, stop, or configure a Gator or enDAQ.
 
+## Install and update from GitHub
+
+The published repository is:
+
+```text
+https://github.com/NathanHouwaart/TestbenchDAQ
+```
+
+### Server (`192.168.0.189`)
+
+The server needs Git, Docker Engine, the Docker Compose plugin, and the NFS
+service. Clone the repository outside the measurement-data directory:
+
+```bash
+sudo apt update
+sudo apt install git docker.io docker-compose-plugin nfs-kernel-server
+sudo mkdir -p /opt/testbenchdaq
+sudo chown "$USER":"$USER" /opt/testbenchdaq
+git clone https://github.com/NathanHouwaart/TestbenchDAQ.git /opt/testbenchdaq
+cd /opt/testbenchdaq
+```
+
+Configure the NFS exports in the next section, then create the portal login
+file and start the containers:
+
+```bash
+mkdir -p portal/auth
+docker run --rm --entrypoint htpasswd httpd:2.4-alpine \
+  -Bbn viewer 'choose-a-strong-password' > portal/auth/.htpasswd
+docker compose -f docker-compose.portal.yml up -d --build
+```
+
+To update the portal later:
+
+```bash
+cd /opt/testbenchdaq
+git pull --ff-only
+docker compose -f docker-compose.portal.yml up -d --build
+```
+
+Measurement data remains in `/srv/testbenchdaq`, outside the Git checkout and
+outside containers, so updating application code never replaces acquired data.
+
+### Acquisition machines (`wentelteef` and `knarskast`)
+
+Clone the same repository on each acquisition machine, but keep its
+machine-specific `config.json` local and untracked:
+
+```bash
+git clone https://github.com/NathanHouwaart/TestbenchDAQ.git ~/TestbenchDAQ
+cd ~/TestbenchDAQ
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+cp config_example.json config.json
+```
+
+Edit `config.json` for that machine. On `wentelteef`, at minimum set:
+
+```json
+{
+  "machine_name": "wentelteef",
+  "output_root": "/mnt/testbench-results"
+}
+```
+
+Keep the installed vendor Gator API and the native recorder build on the
+acquisition machine; they are not committed to Git. When pulling future code
+updates, use:
+
+```bash
+cd ~/TestbenchDAQ
+git pull --ff-only
+source .venv/bin/activate
+python -m pip install -e .
+cmake --build gator_recorder/build
+```
+
+If a future update changes `config_example.json`, compare it with the local
+`config.json` and manually add only the new settings. Never overwrite the
+local file wholesale because it contains hardware identity and calibration
+choices.
+
 ## NFS storage
 
 The server is `192.168.0.189`. Each acquisition machine mounts a different
