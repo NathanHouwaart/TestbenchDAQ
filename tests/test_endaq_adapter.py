@@ -6,7 +6,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from tbdaq.adapters.endaq import EndaqAdapter
+from tbdaq.adapters.endaq import EndaqAdapter, _format_bytes
 from tbdaq.config import EndaqConfig
 
 
@@ -32,6 +32,12 @@ class _FakeDevice:
 
 
 class EndaqAdapterTests(unittest.TestCase):
+    def test_format_bytes_includes_grouped_exact_value_and_gib(self) -> None:
+        self.assertEqual(
+            _format_bytes(7_585_497_088),
+            "7,585,497,088 bytes (7.06 GiB)",
+        )
+
     def test_dismount_proves_start_even_when_library_returns_false(self) -> None:
         adapter = EndaqAdapter(EndaqConfig(enabled=True))
         adapter._device = _FakeDevice(_FakeCommand(acknowledgement=False))

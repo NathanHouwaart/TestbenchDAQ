@@ -17,6 +17,12 @@ from tbdaq.isa_export import ExportWindow, SignalFile, export_endaq_ide_signals
 
 _LOG = logging.getLogger(__name__)
 
+
+def _format_bytes(value: int) -> str:
+    """Return an operator-friendly byte count without losing the exact value."""
+    return f"{value:,} bytes ({value / 1024**3:.2f} GiB)"
+
+
 try:
     import endaq.device as _endaq_device
     from endaq.device.command_interfaces import SerialCommandInterface
@@ -571,13 +577,13 @@ class EndaqAdapter:
             )
         if usage.free < required:
             raise RuntimeError(
-                f"enDAQ free space is {usage.free} bytes; at least {required} bytes "
+                f"enDAQ free space is {_format_bytes(usage.free)}; at least {_format_bytes(required)} "
                 "is required for this run."
             )
         _LOG.info(
-            "enDAQ storage preflight: %d bytes free, %d bytes required.",
-            usage.free,
-            required,
+            "enDAQ storage preflight: %s free; %s required.",
+            _format_bytes(usage.free),
+            _format_bytes(required),
         )
 
     def _list_ide_files(self) -> list[str]:
