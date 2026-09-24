@@ -195,6 +195,11 @@ class Session:
 
                 if run_record["status"] in {"failed", "interrupted"}:
                     terminal = "interrupted" if run_record["status"] == "interrupted" else "failed"
+                    # Prognostic enDAQ conversion is deferred so it cannot
+                    # delay the next planned acquisition. A terminal run has
+                    # no next start to protect, so convert every IDE that was
+                    # safely stopped and offloaded before returning.
+                    self._process_deferred_runs()
                     return self._finish(
                         terminal,
                         f"{run_record['run_id']} ended with status {run_record['status']}.",
@@ -371,12 +376,12 @@ class Session:
             "window_stop_utc": _iso_utc(export_window.stop_utc_s),
             "device_time_origins": {
                 "gator": "first retained Gator sample (device UTC offset not trusted)",
-                "endaq": "IDE session UTC mapped to host measurement-window start",
+                "endaq": "IDE recording first sample (host UTC offset not trusted)",
             } if set(started) == {"gator", "endaq"} else {
                 family: (
                     "first retained Gator sample (device UTC offset not trusted)"
                     if family == "gator"
-                    else "IDE session UTC mapped to host measurement-window start"
+                    else "IDE recording first sample (host UTC offset not trusted)"
                 )
                 for family in started
             },
@@ -384,6 +389,7 @@ class Session:
                 "Native sample rates are preserved; timestamps are not resampled.",
                 "No clock-drift or phase correction is applied.",
                 "Gator device UTC is not used for absolute alignment because its observed offset from host UTC is not trusted.",
+                "enDAQ IDE session UTC is not used for export filtering because it is not stable across repeated recording cycles.",
             ],
         }
 

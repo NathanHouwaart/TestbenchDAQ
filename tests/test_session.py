@@ -354,6 +354,39 @@ class SessionTests(unittest.TestCase):
             all(run["processing_status"] == "success" for run in manifest["runs"])
         )
 
+    def test_interrupted_prognostic_endaq_run_is_still_converted(self) -> None:
+        endaq = FakeAdapter("endaq")
+        original_sleep = self.clock.sleep
+        interrupted = False
+
+        def interrupt_measurement_wait(_duration: float) -> None:
+            nonlocal interrupted
+            if not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt
+            original_sleep(_duration)
+
+        self.clock.sleep = interrupt_measurement_wait  # type: ignore[method-assign]
+        config = SessionConfig(
+            mode="prognostic",
+            output_root=str(self.root),
+            run_count=2,
+            run_duration_s=10,
+            run_period_s=30,
+            endaq=EndaqConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"endaq": endaq}, session_id="interrupted-deferred"
+        ).run()
+
+        self.assertEqual(manifest["status"], "interrupted")
+        self.assertEqual(manifest["runs"][0]["status"], "interrupted")
+        self.assertEqual(manifest["runs"][0]["processing_status"], "success")
+        self.assertTrue(
+            (self.root / "interrupted-deferred" / "run_01" / "signals" / "endaq"
+             / "endaq_signal.csv").is_file()
+        )
+
     def test_endaq_conversion_failure_does_not_fail_raw_acquisition(self) -> None:
         endaq = FakeAdapter("endaq")
 

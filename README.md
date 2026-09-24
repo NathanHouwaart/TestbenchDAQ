@@ -204,8 +204,9 @@ tbdaq --config config.json --mode prognostic --run-until-stopped \
 ```
 
 Press Ctrl+C to stop. The active run is cleaned up and retained; the session
-manifest is marked `interrupted`. This option is limited to prognostic mode;
-diagnostic mode remains exactly one timed or manual run.
+manifest is marked `interrupted`. If enDAQ stopped and its IDE was offloaded,
+its CSV conversion still runs before exit. This option is limited to
+prognostic mode; diagnostic mode remains exactly one timed or manual run.
 
 Before `RecStart`, TestbenchDAQ flushes pending writes and cleanly unmounts the
 enDAQ filesystem. The manifest records separate durations for clean unmount,
@@ -275,6 +276,8 @@ Use `tbdaq --help` for every available override.
 - Started sensors are stopped concurrently.
 - Partial files and manifests are retained.
 - Every new IDE is copied after each run and verified by size and SHA-256.
+- A verified enDAQ IDE is converted even when Ctrl+C ends a prognostic run;
+  `processing_status` records whether that conversion succeeded.
 - Multiple unexpected new IDE files are all preserved and flagged.
 - `delete_after_verified_offload` defaults to `false`, retaining recorder-side
   files.
@@ -310,6 +313,13 @@ million formatted text values.
 
 Gator output always contains all eight `gator_sensor_N_fm.csv` files. An
 all-zero sensor is preserved rather than silently omitted.
+
+enDAQ CSV timestamps are relative to the first sample captured by that
+recorder in the run. TestbenchDAQ does not crop IDE samples using IDE session
+UTC, because that clock relation can change between repeated recordings and
+would risk discarding valid data. The manifest's host measurement window is
+still retained for orchestration evidence, but it is not sample-level device
+synchronization.
 
 The bundled native recorder works around an intermittent GTRLib v0.1.0
 shutdown hang. After explicitly closing the CSV and flushing its completion

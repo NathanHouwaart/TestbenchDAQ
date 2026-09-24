@@ -92,9 +92,11 @@ Phase 1 records host UTC for:
 - adapter stop-call return.
 
 These values describe orchestration and are not claimed to prove sample-level
-synchronization. Processed enDAQ channels are cropped against this host window
-and share its start as `t=0`. Gator output is duration-cropped and uses its first
-retained sample as `t=0`, because its observed device UTC offset is not trusted.
+synchronization. Processed enDAQ channels share the IDE recording's first
+sample as `t=0`; they are not cropped against the host window because IDE
+session UTC can drift between recording cycles relative to the host. Gator
+output is duration-cropped and uses its first retained sample as `t=0`, because
+its observed device UTC offset is not trusted.
 Native sample rates are preserved and no resampling, phase correction, or clock
 drift correction is applied. Every run records this as
 `synchronization.method = "common_window_only"` in the manifest.

@@ -277,9 +277,15 @@ def export_endaq_ide_signals(
     This avoids the former IDE -> combined channel CSV -> per-signal CSV
     pipeline, which formatted and read the same high-rate data twice. Final
     CSV formatting is chunked to avoid another full-size array allocation.
-    With a window, all channels use the same host UTC measurement start as
-    t=0 and samples outside that interval are discarded. Without a window,
-    the legacy per-channel first-sample origin is retained.
+    All channels in an IDE share the recorder's first captured sample as
+    ``t=0``. ``window`` is accepted for API compatibility with the other
+    adapters, but deliberately does not filter IDE events: the IDE session
+    UTC origin has proved not stable across repeated recordings, so using it
+    to translate a host window can silently discard valid samples.
+
+    This makes an enDAQ export run-relative and complete. The manifest still
+    records the host orchestration window; it must not be interpreted as
+    sample-level clock alignment with enDAQ.
     """
     try:
         import numpy as np
@@ -311,24 +317,35 @@ def export_endaq_ide_signals(
             loaded_ids.update((20, 36))
         importer.readData(document, channels=sorted(loaded_ids))
 
-        session_start_utc_s: float | None = None
-        if window is not None:
-            sessions = getattr(document, "sessions", None)
-            if not sessions:
-                raise RuntimeError("IDE has no session timestamp for window alignment.")
-            session_start_utc_s = float(sessions[0].utcStartTime)
-            window_start_us = (window.start_utc_s - session_start_utc_s) * 1_000_000.0
-            window_stop_us = (window.stop_utc_s - session_start_utc_s) * 1_000_000.0
+        del window
 
+        # IDE event timestamps share one recorder clock. Establish a single
+        # run-relative origin across all channels rather than relying on the
+        # document's session UTC timestamp, which can drift between recording
+        # cycles relative to the host clock.
+        channel_events = []
         for channel_id in channel_ids:
             channel = document.channels.get(channel_id)
             if channel is None:
                 continue
             events = channel.getSession()
-            if len(events) == 0:
-                continue
+            if len(events) > 0:
+                channel_events.append((channel_id, events))
+        if not channel_events:
+            return [SignalFile(
+                alias="endaq",
+                path=signal_dir,
+                source_file=str(ide_path),
+                source_column="",
+                status="failed",
+                error="IDE contains no visible channel samples.",
+            )]
+        recording_start_us = min(float(events[0][0]) for _, events in channel_events)
 
-            first_time_us = float(events[0][0])
+        for channel_id, events in channel_events:
+            channel = document.channels.get(channel_id)
+            if channel is None:
+                continue
             channel_label = _sanitize(channel.displayName or channel.name)
             channel_results: list[SignalFile] = []
             try:
@@ -351,23 +368,12 @@ def export_endaq_ide_signals(
                             source_column=subchannel.name,
                             status="success",
                             sample_count=0,
-                            alignment_method=(
-                                "ide_utc_to_host_measurement_window"
-                                if window is not None
-                                else "first_channel_sample_relative"
-                            ),
+                            alignment_method="ide_recording_first_sample_relative",
                         ))
 
                     for start in range(0, len(events), chunk_size):
                         values = events.arraySlice(start, min(start + chunk_size, len(events)))
-                        if window is not None:
-                            mask = (values[0] >= window_start_us) & (values[0] <= window_stop_us)
-                            values = values[:, mask]
-                            if values.shape[1] == 0:
-                                continue
-                            relative_s = (values[0] - window_start_us) / 1_000_000.0
-                        else:
-                            relative_s = (values[0] - first_time_us) / 1_000_000.0
+                        relative_s = (values[0] - recording_start_us) / 1_000_000.0
                         for index, handle in enumerate(handles, start=1):
                             np.savetxt(
                                 handle,
@@ -380,11 +386,6 @@ def export_endaq_ide_signals(
                             if result.first_time_s is None:
                                 result.first_time_s = float(relative_s[0])
                             result.last_time_s = float(relative_s[-1])
-                if window is not None:
-                    for result in channel_results:
-                        if result.sample_count == 0:
-                            result.status = "failed"
-                            result.error = "No samples overlap the measurement window."
                 results.extend(channel_results)
             except Exception as exc:
                 results.extend(

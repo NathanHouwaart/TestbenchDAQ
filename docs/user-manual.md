@@ -52,7 +52,7 @@ tbdaq --config config.json --mode prognostic --run-until-stopped \
   --run-duration-s 60 --run-period-s 300
 ```
 
-Press Ctrl+C once to finish the active run cleanly. Its raw data and manifest are retained and the session status becomes `interrupted`. Do not kill the process or remove USB devices while it is stopping an enDAQ.
+Press Ctrl+C once to finish the active run cleanly. Its raw data and manifest are retained and the session status becomes `interrupted`. If enDAQ stops and its IDE is verified on the output storage, TestbenchDAQ also completes its CSV conversion before exiting. Do not kill the process or remove USB devices while it is stopping an enDAQ.
 
 ### Worked example: a 30-run Gator test on `wentelteef`
 

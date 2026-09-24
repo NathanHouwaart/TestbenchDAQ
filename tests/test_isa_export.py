@@ -62,7 +62,7 @@ class SignalExportTests(unittest.TestCase):
                 ["time_s,value_fm", "0.000000,1", "1.000000,1"],
             )
 
-    def test_endaq_channels_share_host_window_time_origin(self) -> None:
+    def test_endaq_export_keeps_complete_recording_with_common_origin(self) -> None:
         class Events:
             def __init__(self, times_us: list[float], values: list[float]) -> None:
                 self.array = np.asarray([times_us, values], dtype=float)
@@ -111,14 +111,18 @@ class SignalExportTests(unittest.TestCase):
             )
 
             self.assertEqual(len(results), 2)
-            self.assertEqual(results[0].sample_count, 3)
+            self.assertEqual(results[0].sample_count, 5)
             self.assertEqual(results[0].first_time_s, 0.0)
-            self.assertEqual(results[0].last_time_s, 2.0)
-            self.assertEqual(results[1].first_time_s, 0.5)
-            self.assertEqual(results[1].last_time_s, 1.5)
+            self.assertEqual(results[0].last_time_s, 3.0)
+            self.assertEqual(results[1].first_time_s, 1.0)
+            self.assertEqual(results[1].last_time_s, 2.0)
+            self.assertEqual(
+                results[0].alignment_method,
+                "ide_recording_first_sample_relative",
+            )
             self.assertEqual(
                 results[1].path.read_text(encoding="utf-8").splitlines()[1:],
-                ["0.500000,0", "1.500000,1"],
+                ["1.000000,0", "2.000000,1"],
             )
 
 
