@@ -60,7 +60,7 @@ class EndaqAdapterTests(unittest.TestCase):
         findmnt = subprocess_completed(0, "/dev/sda1 vfat\n", "")
         umount = subprocess_completed(0, "", "")
         with (
-            patch("tbdaq.adapters.endaq.os.sync") as sync,
+            patch("tbdaq.adapters.endaq.os.sync", create=True) as sync,
             patch("tbdaq.adapters.endaq.subprocess.run", side_effect=[findmnt, umount]) as run,
             patch("tbdaq.adapters.endaq.os.path.realpath", return_value="/dev/sda1"),
         ):
@@ -75,7 +75,7 @@ class EndaqAdapterTests(unittest.TestCase):
         findmnt = subprocess_completed(0, "/dev/sda1 vfat\n", "")
         umount = subprocess_completed(32, "", "must be superuser")
         with (
-            patch("tbdaq.adapters.endaq.os.sync"),
+            patch("tbdaq.adapters.endaq.os.sync", create=True),
             patch("tbdaq.adapters.endaq.subprocess.run", side_effect=[findmnt, umount]),
             patch("tbdaq.adapters.endaq.os.path.realpath", return_value="/dev/sda1"),
             self.assertRaisesRegex(RuntimeError, "fstab 'users' option"),
