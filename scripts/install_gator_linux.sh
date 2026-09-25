@@ -158,4 +158,4 @@ ldd "$INSTALL_BINARY" | grep -F "$(basename "$installed_library")" >/dev/null ||
 
 echo "Installed $INSTALL_BINARY"
 echo "Installed $installed_library"
-echo "Gator runtime installation completed. Normal acquisition commands need no Gator path settings."
+echo "Gator runtime installation completed."
