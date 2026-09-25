@@ -4,21 +4,24 @@ TestbenchDAQ coordinates a PhotonFirst Gator FBG interrogator and an enDAQ recor
 
 ## Before you start
 
-You need Python 3.11+, the PhotonFirst public GTR C++ API for the target computer, and (when using enDAQ) the recorder connected by USB. Keep the vendor GTR library outside this repository: it is a separate dependency and may have redistribution terms.
+You need Python 3.11+, access to MaintenanceLab's private PhotonFirst runtime release, and (when using enDAQ) the recorder connected by USB. The vendor GTR library stays outside this public repository because it has separate distribution terms.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-./scripts/install_gator_linux.sh \
-  --gtr-api-dir /path/to/public_gtr_api/raspberry-pi4
+gh auth login
+./scripts/install_gator_linux.sh
 ```
 
-This installs `gator_recorder` to `/usr/local/bin` and the PhotonFirst shared
-library to `/usr/local/lib/photonfirst`, then registers the library with the
-Linux linker. No `binary_path` or `library_path` is needed in an operator
-command or configuration after this succeeds.
+The `gh auth login` account needs read access to MaintenanceLab's private
+`ML-Machine-Vendor-Runtimes` repository. The installer downloads the pinned,
+checksum-verified Linux runtime release, builds the recorder, installs it to
+`/usr/local/bin`, installs the PhotonFirst shared library to
+`/usr/local/lib/photonfirst`, and registers it with the Linux linker. No
+`binary_path` or `library_path` is needed in an operator command or
+configuration after this succeeds.
 
 Follow the README's **Install** section for USB permissions and enDAQ mount setup, then verify `tbdaq --help`.
 

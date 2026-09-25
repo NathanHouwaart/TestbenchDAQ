@@ -35,19 +35,29 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Install the Gator recorder and PhotonFirst runtime system-wide, replacing the
-API path if necessary:
+Install the Gator recorder and PhotonFirst runtime system-wide. The vendor
+runtime is downloaded from MaintenanceLab's private runtime repository, so
+authenticate once with an authorised GitHub account first:
+
+```bash
+gh auth login
+./scripts/install_gator_linux.sh
+```
+
+The installer downloads the pinned `photonfirst-gtr-v0.1.0` release, verifies
+its SHA-256 checksum, builds the helper, installs it as
+`/usr/local/bin/gator_recorder`, installs the vendor library under
+`/usr/local/lib/photonfirst`, and runs `ldconfig`. It does not retain the
+downloaded SDK. Afterward, normal commands need neither `gator.binary_path`
+nor `gator.library_path`.
+
+For an offline installation, download the matching runtime archive and its
+`SHA256SUMS` file from the private Release, put them in one directory, then run:
 
 ```bash
 ./scripts/install_gator_linux.sh \
-  --gtr-api-dir "$HOME/Documents/public_gtr_api_v0.1.0/raspberry-pi4"
+  --archive ~/Downloads/photonfirst-gtr-linux-aarch64.tar.gz
 ```
-
-The installer builds the helper, installs it as
-`/usr/local/bin/gator_recorder`, installs the vendor library under
-`/usr/local/lib/photonfirst`, and runs `ldconfig`. The vendor SDK remains an
-installation input and is not committed to this public repository. Afterward,
-normal commands need neither `gator.binary_path` nor `gator.library_path`.
 
 Install the Gator USB access rule, reload udev, and reconnect the Gator:
 
