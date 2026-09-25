@@ -7,6 +7,7 @@ import logging
 import os
 import queue
 import re
+import signal
 import subprocess
 import threading
 import time
@@ -29,6 +30,8 @@ class GatorRunResult:
     requested_samplerate_hz: Optional[int] = None
     actual_samplerate_hz: Optional[float] = None
     device_index: Optional[int] = None
+    timestamp_source: Optional[str] = None
+    vendor_api: Optional[str] = None
     output_path: str = ""
     error: Optional[str] = None
 
@@ -118,6 +121,11 @@ class GatorAdapter:
             env["LD_LIBRARY_PATH"] = f"{cfg.library_path}:{existing}" if existing else cfg.library_path
 
         try:
+            process_options: dict[str, object] = {}
+            if os.name == "nt":
+                # Windows terminate() is TerminateProcess, which prevents a
+                # recorder from stopping its vendor stream and flushing CSV.
+                process_options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
             self._process = subprocess.Popen(
                 args,
                 stdout=subprocess.PIPE,
@@ -125,6 +133,7 @@ class GatorAdapter:
                 text=True,
                 bufsize=1,
                 env=env,
+                **process_options,
             )
         except OSError as exc:
             self._result.error = f"Failed to launch Gator binary: {exc}"
@@ -162,7 +171,7 @@ class GatorAdapter:
         self._result.stop_utc_us = _now_utc_us()
 
         if self._process.poll() is None:
-            self._process.terminate()
+            self._request_graceful_stop()
 
         try:
             self._process.wait(timeout=self._config.stop_timeout_s)
@@ -252,6 +261,8 @@ class GatorAdapter:
                 self._result.requested_samplerate_hz = values.get("requested_samplerate_hz")
                 self._result.actual_samplerate_hz = values.get("actual_samplerate_hz")
                 self._result.device_index = values.get("device_index")
+                self._result.timestamp_source = values.get("timestamp_source")
+                self._result.vendor_api = values.get("vendor_api")
             except (TypeError, ValueError):
                 logging.getLogger(__name__).warning("Could not parse Gator metadata: %s", line.rstrip())
 
@@ -274,6 +285,13 @@ class GatorAdapter:
         if self._result.error is None and self._result.samples_written == 0:
             self._result.error = "Gator recorder completed without receiving any samples."
 
+    def _request_graceful_stop(self) -> None:
+        assert self._process is not None
+        if os.name == "nt":
+            self._process.send_signal(signal.CTRL_BREAK_EVENT)
+        else:
+            self._process.terminate()
+
     def _record_early_exit(self) -> None:
         assert self._process is not None
         self._process.wait()
@@ -286,7 +304,7 @@ class GatorAdapter:
     def _terminate_after_start_failure(self, message: str) -> None:
         assert self._process is not None
         if self._process.poll() is None:
-            self._process.terminate()
+            self._request_graceful_stop()
         try:
             self._process.wait(timeout=self._config.stop_timeout_s)
         except subprocess.TimeoutExpired:

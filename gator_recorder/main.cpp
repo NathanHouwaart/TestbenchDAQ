@@ -380,7 +380,9 @@ int main(int argc, char* argv[])
   const double actualSampleRateHz = switchedGator->getRealSamplingRateHz();
   std::cout << "GATOR_METADATA={\"device_index\":" << deviceIndex
             << ",\"requested_samplerate_hz\":" << requestedSampleRateHz
-            << ",\"actual_samplerate_hz\":" << actualSampleRateHz << "}\n";
+            << ",\"actual_samplerate_hz\":" << actualSampleRateHz
+            << ",\"timestamp_source\":\"device_utc\""
+            << ",\"vendor_api\":\"gtrlib-v0.1.0\"}\n";
   std::cout.flush();
 
   BufferedCsvWriter writer(cfg.outputPath);

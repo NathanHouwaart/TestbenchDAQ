@@ -16,7 +16,9 @@ serialization are subsequent phases.
 - PhotonFirst public GTR C++ API
 - `endaq` and `endaq-device` Python packages
 
-Windows is not currently supported.
+Windows is not currently supported for production acquisition. An experimental
+native helper for the older Windows Gator API is available for local hardware
+validation; see [gator_recorder_windows/README.md](gator_recorder_windows/README.md).
 
 See [docs/user-manual.md](docs/user-manual.md) for the operator-focused setup
 and run guide.

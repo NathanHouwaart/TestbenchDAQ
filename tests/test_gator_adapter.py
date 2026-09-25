@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import sys
+import signal
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from tbdaq.adapters.gator import GatorAdapter, GatorRunResult
 from tbdaq.config import GatorConfig
@@ -64,7 +66,8 @@ class GatorAdapterTests(unittest.TestCase):
 
         adapter._consume_line(
             'GATOR_METADATA={"device_index":1,"requested_samplerate_hz":5000,'
-            '"actual_samplerate_hz":4999.7}\n'
+            '"actual_samplerate_hz":4999.7,"timestamp_source":"device_utc",'
+            '"vendor_api":"gtrlib-v0.1.0"}\n'
         )
         adapter._consume_line("LAST_SAMPLE_UTC_US=1800000005123456\n")
 
@@ -72,6 +75,8 @@ class GatorAdapterTests(unittest.TestCase):
         self.assertEqual(adapter._result.requested_samplerate_hz, 5000)
         self.assertEqual(adapter._result.actual_samplerate_hz, 4999.7)
         self.assertEqual(adapter._result.last_sample_utc_us, 1_800_000_005_123_456)
+        self.assertEqual(adapter._result.timestamp_source, "device_utc")
+        self.assertEqual(adapter._result.vendor_api, "gtrlib-v0.1.0")
 
     def test_zero_samples_is_a_failed_result(self) -> None:
         adapter = GatorAdapter(GatorConfig(enabled=True, binary_path="gator_recorder"))
@@ -81,6 +86,15 @@ class GatorAdapterTests(unittest.TestCase):
 
         self.assertFalse(adapter._result.ok)
         self.assertIn("without receiving any samples", adapter._result.error or "")
+
+    def test_windows_requests_ctrl_break_for_graceful_stop(self) -> None:
+        adapter = GatorAdapter(GatorConfig(enabled=True, binary_path="gator_recorder.exe"))
+        adapter._process = Mock()
+
+        with patch("tbdaq.adapters.gator.os.name", "nt"):
+            adapter._request_graceful_stop()
+
+        adapter._process.send_signal.assert_called_once_with(signal.CTRL_BREAK_EVENT)
 
 
 if __name__ == "__main__":
