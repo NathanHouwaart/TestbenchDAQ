@@ -19,10 +19,10 @@ and extract it locally; do not add it to this public repository. With Visual
 Studio 2022 Build Tools and CMake installed, from the TestbenchDAQ checkout:
 
 ```powershell
-cmake -S gator_recorder_windows -B gator_recorder_windows/build `
+cmake -S gator_recorder -B gator_recorder/build `
   -G "Visual Studio 17 2022" -A x64 `
   -DGATOR_API_DIR="C:/path/to/gatorapi-3.3.0-x64"
-cmake --build gator_recorder_windows/build --config Release
+cmake --build gator_recorder/build --config Release
 ```
 
 The build copies the required private DLLs beside `gator_recorder.exe` for
@@ -39,7 +39,7 @@ python main.py `
   --output-root C:\TestbenchDAQ-data `
   --allow-local-output `
   --gator `
-  --gator-binary .\gator_recorder_windows\build\Release\gator_recorder.exe `
+  --gator-binary .\gator_recorder\build\Release\gator_recorder.exe `
   --gator-channel 1 `
   --gator-fullscale 9 `
   --gator-samplerate 5000 `

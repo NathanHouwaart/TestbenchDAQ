@@ -1,10 +1,3 @@
-cmake_minimum_required(VERSION 3.28)
-project(gator_recorder_windows VERSION 0.1.0 LANGUAGES CXX)
-
-if(NOT WIN32)
-  message(FATAL_ERROR "gator_recorder_windows is only built on Windows.")
-endif()
-
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(CMAKE_CXX_EXTENSIONS OFF)

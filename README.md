@@ -18,7 +18,7 @@ serialization are subsequent phases.
 
 Windows is not currently supported for production acquisition. An experimental
 native helper for the older Windows Gator API is available for local hardware
-validation; see [gator_recorder_windows/README.md](gator_recorder_windows/README.md).
+validation; see [gator_recorder/windows/README.md](gator_recorder/windows/README.md).
 
 See [docs/user-manual.md](docs/user-manual.md) for the operator-focused setup
 and run guide.
