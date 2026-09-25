@@ -11,10 +11,14 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-cmake -S gator_recorder -B gator_recorder/build \
-  -DGTR_API_DIR=/path/to/public_gtr_api/raspberry-pi4
-cmake --build gator_recorder/build
+./scripts/install_gator_linux.sh \
+  --gtr-api-dir /path/to/public_gtr_api/raspberry-pi4
 ```
+
+This installs `gator_recorder` to `/usr/local/bin` and the PhotonFirst shared
+library to `/usr/local/lib/photonfirst`, then registers the library with the
+Linux linker. No `binary_path` or `library_path` is needed in an operator
+command or configuration after this succeeds.
 
 Follow the README's **Install** section for USB permissions and enDAQ mount setup, then verify `tbdaq --help`.
 
@@ -25,7 +29,12 @@ cp config_example.json config.json
 tbdaq --config config.json show-config
 ```
 
-Enable `gator`, `endaq`, or both. For Gator, set `library_path` to the vendor shared-library directory and confirm `binary_path` points to the compiled helper. For enDAQ, optionally pin `serial`, `model`, and `mount_path`; otherwise exactly one discovered recorder is required. Inspect its configurable channels with `tbdaq --config config.json endaq-info`.
+Enable `gator`, `endaq`, or both. The Gator installer supplies the standard
+binary and library locations automatically. Only set `binary_path` or
+`library_path` when deliberately using a non-standard custom installation.
+For enDAQ, optionally pin `serial`, `model`, and `mount_path`; otherwise
+exactly one discovered recorder is required. Inspect its configurable channels
+with `tbdaq --config config.json endaq-info`.
 
 Relative paths are resolved relative to `config.json`. Check their effective absolute values using `show-config` before an unattended test.
 

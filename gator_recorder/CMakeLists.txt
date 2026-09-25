@@ -5,9 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED True)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# The recorder is distributed independently of the PhotonFirst runtime.  Do
+# The recorder is distributed independently of the PhotonFirst runtime. Do
 # not embed the API directory used on the build computer as an ELF RUNPATH;
-# TestbenchDAQ supplies gator.library_path through LD_LIBRARY_PATH at runtime.
+# the Linux installer registers the vendor library with ldconfig instead.
 set(CMAKE_SKIP_RPATH TRUE)
 
 # Path to the public GTR API package (directory containing include/ and libgtrlib*.so)

@@ -13,8 +13,9 @@
   "allow_partial": false,
   "gator": {
     "enabled": false,
-    "binary_path": "./gator_recorder/build/gator_recorder",
-    "library_path": "/home/wentelteef/Documents/public_gtr_api_v0.1.0/raspberry-pi4",
+    "_installation_comment": "After scripts/install_gator_linux.sh, use these system defaults.",
+    "binary_path": "/usr/local/bin/gator_recorder",
+    "library_path": "",
     "channel": 8,
     "samplerate": 1000,
     "fullscale": null,

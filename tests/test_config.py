@@ -18,6 +18,12 @@ class ConfigTests(unittest.TestCase):
             base_dir=self.base,
         )
         self.assertEqual(config.missed_start_policy, "abort")
+        self.assertTrue(
+            config.gator.binary_path.replace("\\", "/").endswith(
+                "/usr/local/bin/gator_recorder"
+            )
+        )
+        self.assertEqual(config.gator.library_path, "")
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()

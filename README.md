@@ -35,13 +35,19 @@ python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Build the Gator recorder, replacing the API path if necessary:
+Install the Gator recorder and PhotonFirst runtime system-wide, replacing the
+API path if necessary:
 
 ```bash
-cmake -S gator_recorder -B gator_recorder/build \
-  -DGTR_API_DIR=/home/wentelteef/Documents/public_gtr_api_v0.1.0/raspberry-pi4
-cmake --build gator_recorder/build
+./scripts/install_gator_linux.sh \
+  --gtr-api-dir "$HOME/Documents/public_gtr_api_v0.1.0/raspberry-pi4"
 ```
+
+The installer builds the helper, installs it as
+`/usr/local/bin/gator_recorder`, installs the vendor library under
+`/usr/local/lib/photonfirst`, and runs `ldconfig`. The vendor SDK remains an
+installation input and is not committed to this public repository. Afterward,
+normal commands need neither `gator.binary_path` nor `gator.library_path`.
 
 Install the Gator USB access rule, reload udev, and reconnect the Gator:
 

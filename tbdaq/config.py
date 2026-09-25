@@ -14,7 +14,9 @@ class ConfigError(ValueError):
 @dataclass
 class GatorConfig:
     enabled: bool = False
-    binary_path: str = "./gator_recorder/build/gator_recorder"
+    # The Linux installer places the recorder here. This lets normal operator
+    # commands locate the Gator executable without a config file.
+    binary_path: str = "/usr/local/bin/gator_recorder"
     library_path: str = ""
     channel: int = 8
     samplerate: Optional[int] = None
