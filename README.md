@@ -439,7 +439,9 @@ python -m compileall -q tbdaq tests
 
 ## Current limitations
 
-- Gator selection still uses the first device returned by the native library.
+- With exactly one detected Gator it is selected automatically. With more than
+  one, the acquisition must specify `--gator-device-index`; the native helper
+  lists the available indices rather than choosing a device silently.
 - Processed signals are cropped to the common measurement window, but this is
   not sample-level synchronization. enDAQ channels share the host-window time
   origin; Gator uses its first retained sample because its device UTC offset is

@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -67,6 +68,11 @@ class BufferedCsvWriter {
     lock.unlock();
     if (_writerThread.joinable()) _writerThread.join();
     lock.lock();
+    _output.flush();
+    if (!_output) {
+      _writeFailed = true;
+      _writeError = "Failed to flush CSV output.";
+    }
     _closed = true;
     rethrowIfWriteFailedLocked();
   }
@@ -129,25 +135,36 @@ class ChannelRecorder {
 
   void onSample(const P1::Sample& sample)
   {
-    if (_finished.load() || g_stopRequested.load()) {
-      if (!_finished.exchange(true)) _done.notify_one();
-      return;
+    try {
+      if (_finished.load() || g_stopRequested.load()) {
+        if (!_finished.exchange(true)) _done.notify_one();
+        return;
+      }
+      if (sample.channel != _channel) return;
+      std::lock_guard<std::mutex> lock(_mutex);
+      if (_finished.load()) return;
+      if (_startUtcUs == 0) {
+        _startUtcUs = sample.utcTimestampUs;
+        std::cout << "START_UTC_US=" << _startUtcUs << '\n';
+        std::cout.flush();
+      }
+      if (_captureDurationUs > 0 &&
+          sample.utcTimestampUs - _startUtcUs >= _captureDurationUs) {
+        _finished.store(true); _done.notify_one(); return;
+      }
+      _writer.append(CsvRow{
+          sample.utcTimestampUs, sample.channel,
+          {sample.wavelengthFm[P1::Channel1], sample.wavelengthFm[P1::Channel2],
+           sample.wavelengthFm[P1::Channel3], sample.wavelengthFm[P1::Channel4],
+           sample.wavelengthFm[P1::Channel5], sample.wavelengthFm[P1::Channel6],
+           sample.wavelengthFm[P1::Channel7], sample.wavelengthFm[P1::Channel8]}});
+      _lastUtcUs = sample.utcTimestampUs;
+      _sampleCount++;
+    } catch (const std::exception& ex) {
+      fail(std::string("Sample callback failed: ") + ex.what());
+    } catch (...) {
+      fail("Sample callback failed with an unknown exception.");
     }
-    if (sample.channel != _channel) return;
-    std::lock_guard<std::mutex> lock(_mutex);
-    if (_finished.load()) return;
-    if (_startUtcUs == 0) _startUtcUs = sample.utcTimestampUs;
-    if (_captureDurationUs > 0 &&
-        sample.utcTimestampUs - _startUtcUs >= _captureDurationUs) {
-      _finished.store(true); _done.notify_one(); return;
-    }
-    _writer.append(CsvRow{
-        sample.utcTimestampUs, sample.channel,
-        {sample.wavelengthFm[P1::Channel1], sample.wavelengthFm[P1::Channel2],
-         sample.wavelengthFm[P1::Channel3], sample.wavelengthFm[P1::Channel4],
-         sample.wavelengthFm[P1::Channel5], sample.wavelengthFm[P1::Channel6],
-         sample.wavelengthFm[P1::Channel7], sample.wavelengthFm[P1::Channel8]}});
-    _sampleCount++;
   }
 
   void waitUntilFinished()
@@ -171,6 +188,16 @@ class ChannelRecorder {
   }
 
   size_t sampleCount() const { return _sampleCount.load(); }
+  uint64_t lastUtcUs() const
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _lastUtcUs;
+  }
+  std::optional<std::string> failure() const
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    return _failure;
+  }
 
  private:
   P1::Channel _channel;
@@ -179,14 +206,26 @@ class ChannelRecorder {
   mutable std::mutex _mutex;
   std::condition_variable _done;
   uint64_t _startUtcUs = 0;
+  uint64_t _lastUtcUs = 0;
   std::atomic<bool> _finished{false};
   std::atomic<size_t> _sampleCount{0};
+  std::optional<std::string> _failure;
+
+  void fail(std::string message)
+  {
+    std::lock_guard<std::mutex> lock(_mutex);
+    if (!_failure) _failure = std::move(message);
+    _finished.store(true);
+    g_stopRequested.store(true);
+    _done.notify_one();
+  }
 };
 
 struct CliConfig {
   std::string outputPath      = "channel_samples.csv";
   uint64_t    durationSeconds = 10;
   int         channelNumber   = 8;
+  std::optional<size_t>        deviceIndex;
   std::optional<uint8_t>        fullScaleRange;
   std::optional<double>         detectionThreshold;
   std::optional<P1::SampleRate> sampleRate;
@@ -199,6 +238,7 @@ struct CliConfig {
     "  --output PATH       Output CSV file path       (default: channel_samples.csv)\n"
     "  --duration-s N      Record for N seconds, 0 = until SIGTERM  (default: 10)\n"
     "  --channel N         Channel 1-8                (default: 8)\n"
+    "  --device-index N    Zero-based detected Gator index (required if multiple)\n"
     "  --fullscale N       Full-scale range 8-127     (default: from device)\n"
     "  --threshold F       Detection threshold 0-1    (default: from device)\n"
     "  --samplerate NAME   1000|5000|10000|19000      (default: from device)\n"
@@ -219,7 +259,12 @@ CliConfig parseCli(int argc, char* argv[])
     };
 
     if      (key == "--output")     cfg.outputPath      = nextArg();
-    else if (key == "--duration-s") cfg.durationSeconds = std::stoull(nextArg());
+    else if (key == "--duration-s") {
+      cfg.durationSeconds = std::stoull(nextArg());
+      if (cfg.durationSeconds > std::numeric_limits<uint64_t>::max() / 1'000'000ULL)
+      { std::cerr << "--duration-s is too large\n"; printUsageAndExit(1); }
+    }
+    else if (key == "--device-index") cfg.deviceIndex = std::stoull(nextArg());
     else if (key == "--channel") {
       cfg.channelNumber = std::stoi(nextArg());
       if (cfg.channelNumber < 1 || cfg.channelNumber > 8)
@@ -249,6 +294,26 @@ CliConfig parseCli(int argc, char* argv[])
   return cfg;
 }
 
+int sampleRateLabelHz(P1::SampleRate rate)
+{
+  switch (rate) {
+    case P1::SampleRate::k1000Hz: return 1000;
+    case P1::SampleRate::k5000Hz: return 5000;
+    case P1::SampleRate::k10000Hz: return 10000;
+    case P1::SampleRate::k19000Hz: return 19000;
+  }
+  return -1;
+}
+
+[[noreturn]] void exitAfterSubscription(int code, const std::string& message)
+{
+  std::cerr << message << '\n';
+  std::cerr.flush();
+  // GTRLib v0.1.0 exposes subscribe() but no unsubscribe/disconnect operation.
+  // Do not enter vendor teardown after a subscription; it can hang.
+  std::_Exit(code);
+}
+
 } // namespace
 
 int main(int argc, char* argv[])
@@ -265,12 +330,27 @@ int main(int argc, char* argv[])
   const auto& devices = gtrLib.getDevices();
   if (devices.empty()) { std::cerr << "No gators detected!\n"; return 1; }
 
-  auto switchedGator = gtrLib.connectToSwitchedGator(devices[0]);
-  if (!switchedGator) { std::cerr << "Failed to connect to switched gator!\n"; return 2; }
+  if (!cfg.deviceIndex && devices.size() != 1) {
+    std::cerr << "Detected " << devices.size()
+              << " Gators; pass --device-index explicitly:\n";
+    for (size_t index = 0; index < devices.size(); ++index) {
+      std::cerr << "  [" << index << "] " << devices[index].info() << '\n';
+    }
+    return 2;
+  }
+  const size_t deviceIndex = cfg.deviceIndex.value_or(0);
+  if (deviceIndex >= devices.size()) {
+    std::cerr << "--device-index " << deviceIndex << " is out of range; detected "
+              << devices.size() << " Gator(s).\n";
+    return 2;
+  }
+
+  auto switchedGator = gtrLib.connectToSwitchedGator(devices[deviceIndex]);
+  if (!switchedGator) { std::cerr << "Failed to connect to selected switched gator!\n"; return 3; }
 
   P1::GatorConfig gatorConfig;
   if (!switchedGator->getConfiguration(gatorConfig))
-  { std::cerr << "Failed to read gator configuration!\n"; return 3; }
+  { std::cerr << "Failed to read gator configuration!\n"; return 4; }
 
   bool changed = false;
   if (cfg.sampleRate)         { gatorConfig.sampleRate         = *cfg.sampleRate;         changed = true; }
@@ -280,14 +360,14 @@ int main(int argc, char* argv[])
   if (changed) {
     std::cout << "Applying gator configuration (may take up to 2s)...\n";
     if (!switchedGator->configure(gatorConfig))
-    { std::cerr << "Failed to apply gator configuration!\n"; return 4; }
+    { std::cerr << "Failed to apply gator configuration!\n"; return 5; }
   }
 
   auto channel = static_cast<P1::Channel>(cfg.channelNumber - 1);
   P1::SwitchedGatorChannelConfig channelConfig;
   channelConfig.setSingleChannel(channel);
   if (!switchedGator->setChannelConfig(channelConfig))
-  { std::cerr << "Failed to set channel config!\n"; return 5; }
+  { std::cerr << "Failed to set channel config!\n"; return 6; }
 
   if (cfg.durationSeconds == 0)
     std::cout << "Recording channel " << cfg.channelNumber
@@ -296,10 +376,11 @@ int main(int argc, char* argv[])
     std::cout << "Recording channel " << cfg.channelNumber
               << " for " << cfg.durationSeconds << " s to " << cfg.outputPath << "...\n";
 
-  // Emit UTC start time so the Python orchestrator can align with other devices
-  auto nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
-  std::cout << "START_UTC_US=" << nowUs << '\n';
+  const int requestedSampleRateHz = sampleRateLabelHz(gatorConfig.sampleRate);
+  const double actualSampleRateHz = switchedGator->getRealSamplingRateHz();
+  std::cout << "GATOR_METADATA={\"device_index\":" << deviceIndex
+            << ",\"requested_samplerate_hz\":" << requestedSampleRateHz
+            << ",\"actual_samplerate_hz\":" << actualSampleRateHz << "}\n";
   std::cout.flush();
 
   BufferedCsvWriter writer(cfg.outputPath);
@@ -311,15 +392,19 @@ int main(int argc, char* argv[])
   recorder.waitUntilFinished();
 
   try { writer.close(); }
-  catch (const std::exception& ex) { std::cerr << ex.what() << '\n'; return 6; }
+  catch (const std::exception& ex) { exitAfterSubscription(7, ex.what()); }
+  if (const auto failure = recorder.failure()) {
+    exitAfterSubscription(8, *failure);
+  }
+  if (recorder.sampleCount() == 0) {
+    exitAfterSubscription(9, "Gator recording completed without receiving any samples.");
+  }
 
+  std::cout << "LAST_SAMPLE_UTC_US=" << recorder.lastUtcUs() << '\n';
   std::cout << "Wrote " << recorder.sampleCount() << " samples to " << cfg.outputPath << '\n';
   std::cout.flush();
 
-  // GTRLib v0.1.0 exposes subscribe() but no unsubscribe/disconnect operation.
-  // Its object teardown can occasionally block after capture has completed.
-  // The CSV writer is explicitly closed and stdout explicitly flushed above,
-  // so terminate without invoking the vendor-owned destructors. The OS closes
-  // the remaining USB handles when the process exits.
+  // Output is explicitly flushed before bypassing vendor teardown. The OS
+  // closes remaining USB handles when the process exits.
   std::_Exit(0);
 }

@@ -2,10 +2,11 @@
    the START_UTC_US token from its stdout for cross-device alignment."""
 from __future__ import annotations
 
+import json
+import logging
 import os
 import queue
 import re
-import logging
 import subprocess
 import threading
 import time
@@ -24,6 +25,10 @@ class GatorRunResult:
     start_utc_us: Optional[int] = None
     stop_utc_us: Optional[int] = None
     samples_written: Optional[int] = None
+    last_sample_utc_us: Optional[int] = None
+    requested_samplerate_hz: Optional[int] = None
+    actual_samplerate_hz: Optional[float] = None
+    device_index: Optional[int] = None
     output_path: str = ""
     error: Optional[str] = None
 
@@ -104,6 +109,8 @@ class GatorAdapter:
             args += ["--fullscale", str(cfg.fullscale)]
         if cfg.threshold is not None:
             args += ["--threshold", str(cfg.threshold)]
+        if cfg.device_index is not None:
+            args += ["--device-index", str(cfg.device_index)]
 
         env = dict(os.environ)
         if cfg.library_path:
@@ -172,6 +179,7 @@ class GatorAdapter:
                 f"Gator binary exited with code {self._process.returncode}. "
                 f"output: {self._recent_output()}"
             )
+        self._mark_missing_samples_as_error()
 
         self._process = None
         return self._result
@@ -198,6 +206,7 @@ class GatorAdapter:
                 f"Gator binary exited with code {self._process.returncode}. "
                 f"output: {self._recent_output()}"
             )
+        self._mark_missing_samples_as_error()
 
         self._process = None
         return self._result
@@ -233,6 +242,18 @@ class GatorAdapter:
                 "Gator recording stopped after %d samples.",
                 self._result.samples_written,
             )
+        last_sample = re.search(r"LAST_SAMPLE_UTC_US=(\d+)", line)
+        if last_sample:
+            self._result.last_sample_utc_us = int(last_sample.group(1))
+        metadata = re.search(r"GATOR_METADATA=(\{.*\})", line)
+        if metadata:
+            try:
+                values = json.loads(metadata.group(1))
+                self._result.requested_samplerate_hz = values.get("requested_samplerate_hz")
+                self._result.actual_samplerate_hz = values.get("actual_samplerate_hz")
+                self._result.device_index = values.get("device_index")
+            except (TypeError, ValueError):
+                logging.getLogger(__name__).warning("Could not parse Gator metadata: %s", line.rstrip())
 
     def _finish_output_reader(self) -> None:
         if self._output_thread is not None:
@@ -248,6 +269,10 @@ class GatorAdapter:
 
     def _recent_output(self) -> str:
         return " | ".join(self._output_lines[-5:])
+
+    def _mark_missing_samples_as_error(self) -> None:
+        if self._result.error is None and self._result.samples_written == 0:
+            self._result.error = "Gator recorder completed without receiving any samples."
 
     def _record_early_exit(self) -> None:
         assert self._process is not None

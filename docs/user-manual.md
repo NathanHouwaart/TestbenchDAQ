@@ -35,6 +35,10 @@ tbdaq --config config.json show-config
 Enable `gator`, `endaq`, or both. The Gator installer supplies the standard
 binary and library locations automatically. Only set `binary_path` or
 `library_path` when deliberately using a non-standard custom installation.
+If more than one Gator is physically attached, choose one explicitly with
+`--gator-device-index 0` (or set `gator.device_index` in `config.json`). A
+single detected Gator is selected automatically. The session manifest records
+the selected device index plus requested and actual Gator sample rates.
 For enDAQ, optionally pin `serial`, `model`, and `mount_path`; otherwise
 exactly one discovered recorder is required. Inspect its configurable channels
 with `tbdaq --config config.json endaq-info`.

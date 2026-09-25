@@ -131,6 +131,19 @@ class ConfigTests(unittest.TestCase):
             str((self.base / "bin/recorder").resolve()),
         )
 
+    def test_gator_device_index_is_optional_and_non_negative(self) -> None:
+        config = session_config_from_mapping(
+            {"gator": {"enabled": True, "device_index": 1}},
+            base_dir=self.base,
+        )
+        self.assertEqual(config.gator.device_index, 1)
+
+        with self.assertRaisesRegex(ConfigError, "device_index must be >= 0"):
+            session_config_from_mapping(
+                {"gator": {"enabled": True, "device_index": -1}},
+                base_dir=self.base,
+            )
+
     def test_unknown_keys_fail_fast(self) -> None:
         with self.assertRaisesRegex(ConfigError, "Unknown top-level"):
             session_config_from_mapping(

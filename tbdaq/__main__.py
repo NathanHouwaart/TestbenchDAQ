@@ -139,6 +139,7 @@ def _build_config(args: argparse.Namespace) -> SessionConfig:
     _set_if_not_none(gator, "enabled", args.gator_enabled)
     _set_if_not_none(gator, "binary_path", args.gator_binary)
     _set_if_not_none(gator, "library_path", args.gator_library)
+    _set_if_not_none(gator, "device_index", args.gator_device_index)
     _set_if_not_none(gator, "channel", args.gator_channel)
     _set_if_not_none(gator, "samplerate", args.gator_samplerate)
     _set_if_not_none(gator, "fullscale", args.gator_fullscale)
@@ -239,6 +240,12 @@ def _make_parser() -> argparse.ArgumentParser:
     )
     gator.add_argument("--gator-binary", metavar="PATH")
     gator.add_argument("--gator-library", metavar="DIR")
+    gator.add_argument(
+        "--gator-device-index",
+        type=int,
+        metavar="INDEX",
+        help="Select a detected Gator by zero-based index when multiple are connected",
+    )
     gator.add_argument("--gator-channel", type=int, metavar="1-8")
     gator.add_argument(
         "--gator-samplerate",

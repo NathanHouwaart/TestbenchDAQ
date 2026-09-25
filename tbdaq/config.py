@@ -18,6 +18,7 @@ class GatorConfig:
     # commands locate the Gator executable without a config file.
     binary_path: str = "/usr/local/bin/gator_recorder"
     library_path: str = ""
+    device_index: Optional[int] = None
     channel: int = 8
     samplerate: Optional[int] = None
     fullscale: Optional[int] = None
@@ -125,6 +126,8 @@ class SessionConfig:
                 raise ConfigError("gator.binary_path is required when Gator is enabled.")
             if not 1 <= self.gator.channel <= 8:
                 raise ConfigError("gator.channel must be between 1 and 8.")
+            if self.gator.device_index is not None and self.gator.device_index < 0:
+                raise ConfigError("gator.device_index must be >= 0.")
             if self.gator.samplerate not in {None, 1000, 5000, 10000, 19000}:
                 raise ConfigError("gator.samplerate must be 1000, 5000, 10000, or 19000 Hz.")
             if self.gator.fullscale is not None and not 8 <= self.gator.fullscale <= 127:
@@ -175,7 +178,7 @@ _SESSION_KEYS = {
     "missed_start_tolerance_s", "missed_start_policy", "allow_partial", "gator", "endaq",
 }
 _GATOR_KEYS = {
-    "enabled", "binary_path", "library_path", "channel",
+    "enabled", "binary_path", "library_path", "device_index", "channel",
     "samplerate", "fullscale", "threshold", "start_timeout_s", "stop_timeout_s",
 }
 _ENDAQ_KEYS = {
