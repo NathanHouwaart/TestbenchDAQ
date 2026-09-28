@@ -3,13 +3,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+INSTALL_USER="${SUDO_USER:-$USER}"
+INSTALL_UID="$(id -u "$INSTALL_USER")"
+INSTALL_GID="$(id -g "$INSTALL_USER")"
 
 if [[ "${EUID}" -ne 0 ]]; then
   exec sudo "$0" "$@"
 fi
 
-FSTAB_LINE='UUID=6430-3964 /mnt/endaq vfat noauto,nofail,users,uid=1000,gid=1000,utf8,umask=022 0 0'
+FSTAB_LINE="UUID=6430-3964 /mnt/endaq vfat noauto,nofail,users,uid=${INSTALL_UID},gid=${INSTALL_GID},utf8,umask=022 0 0"
 FSTAB_TMP="$(mktemp)"
 trap 'rm -f "$FSTAB_TMP"' EXIT
 
@@ -22,12 +26,15 @@ awk -v replacement="$FSTAB_LINE" '
   exit 1
 }
 
-[[ -e /etc/fstab.tbdaq-backup ]] || \
+if [[ ! -e /etc/fstab.tbdaq-backup ]]; then
   install -o root -g root -m 0644 /etc/fstab /etc/fstab.tbdaq-backup
-[[ ! -e /etc/udev/rules.d/99-endaq.rules || -e /etc/udev/rules.d/99-endaq.rules.tbdaq-backup ]] || \
+fi
+if [[ -e /etc/udev/rules.d/99-endaq.rules ]] && \
+   [[ ! -e /etc/udev/rules.d/99-endaq.rules.tbdaq-backup ]]; then
   install -o root -g root -m 0644 \
     /etc/udev/rules.d/99-endaq.rules \
     /etc/udev/rules.d/99-endaq.rules.tbdaq-backup
+fi
 
 install -o root -g root -m 0644 "$FSTAB_TMP" /etc/fstab
 install -o root -g root -m 0644 \

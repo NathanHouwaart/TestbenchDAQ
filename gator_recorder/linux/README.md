@@ -2,7 +2,7 @@
 
 This is the supported Linux/AArch64 implementation using the PhotonFirst public
 GTR C++ API. Normal installation is performed by the repository-level
-`scripts/install_gator_linux.sh`; it obtains the authorised private runtime,
+`scripts/install/install_gator.sh`; it obtains the authorised private runtime,
 builds this helper through `gator_recorder/CMakeLists.txt`, and installs the
 result system-wide.
 

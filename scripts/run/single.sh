@@ -3,4 +3,4 @@
 # Explicit named CLI options may still be supplied as overrides.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec "$SCRIPT_DIR/run_configured.sh" --mode diagnostic --run-count 1 "$@"
+exec "$SCRIPT_DIR/configured.sh" --mode diagnostic --run-count 1 "$@"

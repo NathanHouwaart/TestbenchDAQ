@@ -15,7 +15,7 @@ LINKER_CONFIG="/etc/ld.so.conf.d/photonfirst.conf"
 
 usage() {
   cat <<EOF
-Usage: ./scripts/install_gator_linux.sh [OPTIONS]
+Usage: ./scripts/install/install_gator.sh [OPTIONS]
 
 Install the pinned PhotonFirst Gator runtime and the TestbenchDAQ recorder.
 
@@ -133,7 +133,7 @@ shopt -u nullglob
 (( ${#libraries[@]} == 1 )) || die \
   "Expected exactly one libgtrlib-pub-shared-v*.so in the runtime archive."
 
-repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_dir="$temporary_dir/gator-recorder-build"
 echo "Building gator_recorder against $SDK_ROOT_NAME..."
 cmake -S "$repo_dir/gator_recorder" -B "$build_dir" \
@@ -151,6 +151,16 @@ sudo install -o root -g root -m 0644 "${libraries[0]}" "$INSTALL_LIBRARY_DIR/"
 printf '%s\n' "$INSTALL_LIBRARY_DIR" | sudo tee "$LINKER_CONFIG" >/dev/null
 sudo ldconfig
 
+sudo install -o root -g root -m 0644 \
+  "$repo_dir/udev/101-ftdi-access.rules" /etc/udev/rules.d/101-ftdi-access.rules
+sudo udevadm control --reload-rules
+sudo udevadm trigger
+
+if ! id -nG "$USER" | tr ' ' '\n' | grep -qx 'plugdev'; then
+  sudo usermod -aG plugdev "$USER"
+  echo "Added $USER to plugdev. Log out and back in before acquiring from a Gator."
+fi
+
 installed_library="$INSTALL_LIBRARY_DIR/$(basename "${libraries[0]}")"
 [[ -f "$installed_library" ]] || die "Installed vendor library is missing: $installed_library"
 ldd "$INSTALL_BINARY" | grep -F "$(basename "$installed_library")" >/dev/null || die \
@@ -158,4 +168,5 @@ ldd "$INSTALL_BINARY" | grep -F "$(basename "$installed_library")" >/dev/null ||
 
 echo "Installed $INSTALL_BINARY"
 echo "Installed $installed_library"
+echo "Installed the Gator USB access rule. Reconnect the Gator after logging back in."
 echo "Gator runtime installation completed."

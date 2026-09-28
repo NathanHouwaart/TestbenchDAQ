@@ -13,7 +13,7 @@
   "allow_partial": false,
   "gator": {
     "enabled": false,
-    "_installation_comment": "After scripts/install_gator_linux.sh, use these system defaults.",
+    "_installation_comment": "After scripts/install/install_gator.sh, use these system defaults.",
     "binary_path": "/usr/local/bin/gator_recorder",
     "library_path": "",
     "device_index": null,
