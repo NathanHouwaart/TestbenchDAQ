@@ -156,9 +156,9 @@ class Session:
                     )
                     if self._config.missed_start_policy == "abort":
                         abort_message = (
-                            "PROGNOSTIC SCHEDULE VIOLATION — ABORTING SESSION: "
+                            "PROGNOSTIC SCHEDULE VIOLATION - ABORTING SESSION: "
                             f"{reason} Increase run_period_s to leave enough time for "
-                            "enDAQ stop/remount/offload, or explicitly set "
+                            "acquisition cleanup, required recorder offload, and storage writes, or explicitly set "
                             "missed_start_policy to 'start_late'."
                         )
                         _LOG.error(abort_message)
@@ -195,16 +195,17 @@ class Session:
 
                 if run_record["status"] in {"failed", "interrupted"}:
                     terminal = "interrupted" if run_record["status"] == "interrupted" else "failed"
-                    # Prognostic enDAQ conversion is deferred so it cannot
-                    # delay the next planned acquisition. A terminal run has
-                    # no next start to protect, so convert every IDE that was
-                    # safely stopped and offloaded before returning.
+                    # Prognostic signal export is deferred so it cannot delay
+                    # the next planned acquisition. A terminal run has no next
+                    # start to protect, so export every safely retained raw
+                    # acquisition before returning.
                     self._process_deferred_runs()
                     return self._finish(
                         terminal,
                         f"{run_record['run_id']} ended with status {run_record['status']}.",
                     )
                 if run_record["status"] == "partial" and not self._config.allow_partial:
+                    self._process_deferred_runs()
                     return self._finish(
                         "failed",
                         f"{run_record['run_id']} was partial while allow_partial is false.",
@@ -394,14 +395,16 @@ class Session:
         }
 
         processing_incomplete = False
+        deferred_processing = False
         self._set_live_status("processing", run_number)
         for family, adapter in started.items():
             adapter_record = record["adapters"][family]
-            if self._config.mode == "prognostic" and family == "endaq":
+            if self._config.mode == "prognostic" and family in {"endaq", "gator"}:
                 adapter_record["processing"] = {"status": "deferred"}
                 self._deferred_processing.append(
                     (record, family, adapter, run_dir, export_window)
                 )
+                deferred_processing = True
                 continue
             try:
                 signals, complete = self._process_adapter(
@@ -426,7 +429,7 @@ class Session:
             if "stop" in item
         )
         record["processing_status"] = (
-            "deferred" if self._config.mode == "prognostic" and "endaq" in started
+            "deferred" if deferred_processing
             else "incomplete" if processing_incomplete
             else "success"
         )
@@ -509,9 +512,7 @@ class Session:
                 _signals, complete = self._process_adapter(
                     record, family, adapter, run_dir, window
                 )
-                record["processing_status"] = "success" if complete else "incomplete"
             except Exception as exc:
-                record["processing_status"] = "incomplete"
                 record["adapters"][family]["processing"] = {
                     "status": "failed",
                     "successful_signals": 0,
@@ -521,6 +522,15 @@ class Session:
                 record["warnings"].append(
                     f"{family} deferred processing failed: {exc}"
                 )
+            processing_states = [
+                item.get("processing", {}).get("status")
+                for item in record["adapters"].values()
+            ]
+            record["processing_status"] = (
+                "success"
+                if processing_states and all(state == "success" for state in processing_states)
+                else "incomplete"
+            )
             self._write_manifest()
         self._deferred_processing.clear()
 

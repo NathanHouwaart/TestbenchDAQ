@@ -273,15 +273,13 @@ class SessionTests(unittest.TestCase):
 
     def test_prognostic_schedule_aborts_after_missed_start(self) -> None:
         gator = FakeAdapter("gator")
-        normal_export = gator.export_run
+        normal_stop = gator.stop_run
 
-        def delayed_export(
-            run_dir: Path, *, window: ExportWindow | None = None
-        ) -> list[SignalFile]:
+        def delayed_stop(run_dir: Path) -> FakeResult:
             self.clock.sleep(3)
-            return normal_export(run_dir, window=window)
+            return normal_stop(run_dir)
 
-        gator.export_run = delayed_export  # type: ignore[method-assign]
+        gator.stop_run = delayed_stop  # type: ignore[method-assign]
         config = SessionConfig(
             mode="prognostic",
             output_root=str(self.root),
@@ -304,15 +302,13 @@ class SessionTests(unittest.TestCase):
 
     def test_start_late_policy_continues_after_cleanup_overrun(self) -> None:
         gator = FakeAdapter("gator")
-        normal_export = gator.export_run
+        normal_stop = gator.stop_run
 
-        def delayed_export(
-            run_dir: Path, *, window: ExportWindow | None = None
-        ) -> list[SignalFile]:
+        def delayed_stop(run_dir: Path) -> FakeResult:
             self.clock.sleep(3)
-            return normal_export(run_dir, window=window)
+            return normal_stop(run_dir)
 
-        gator.export_run = delayed_export  # type: ignore[method-assign]
+        gator.stop_run = delayed_stop  # type: ignore[method-assign]
         config = SessionConfig(
             mode="prognostic",
             output_root=str(self.root),
@@ -350,6 +346,26 @@ class SessionTests(unittest.TestCase):
         ).run()
         self.assertEqual(manifest["status"], "success")
         self.assertEqual(len(manifest["runs"]), 2)
+        self.assertTrue(
+            all(run["processing_status"] == "success" for run in manifest["runs"])
+        )
+
+    def test_prognostic_gator_processing_is_deferred_until_after_runs(self) -> None:
+        gator = FakeAdapter("gator", export_delay_s=3, clock=self.clock)
+        config = SessionConfig(
+            mode="prognostic",
+            output_root=str(self.root),
+            run_count=2,
+            run_duration_s=1,
+            run_period_s=2,
+            missed_start_tolerance_s=0.5,
+            gator=GatorConfig(enabled=True),
+        )
+        manifest = self._session(
+            config, {"gator": gator}, session_id="deferred-gator"
+        ).run()
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(gator.start_calls, 2)
         self.assertTrue(
             all(run["processing_status"] == "success" for run in manifest["runs"])
         )

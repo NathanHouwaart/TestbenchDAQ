@@ -91,8 +91,9 @@ Then run a diagnostic measurement without `--allow-local-output`:
 ## NFS server storage: prognostic run-to-failure series
 
 A prognostic session repeats timed measurements. `run_period_s` is measured
-from one run start to the next, so it must allow for the measurement duration
-and enDAQ stop, remount, and verified offload time.
+from one run start to the next, so it must allow for the measurement duration,
+startup/shutdown, and enDAQ stop, remount, and verified offload time. Gator and
+enDAQ signal CSV export is deferred until the scheduled series has ended.
 
 ```bash
 # 30 runs, each 120 seconds, scheduled every 240 seconds

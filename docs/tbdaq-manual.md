@@ -31,7 +31,7 @@ tbdaq [OPTIONS] [run | show-config | endaq-info | endaq-stop]
 | `--run-until-stopped` | Repeat prognostic runs until Ctrl+C and clean up active run; mutually exclusive with `--run-count`. |
 | `--run-duration-s SECONDS` | Timed duration (`> 0`); mutually exclusive with `--manual`; required for prognostic mode. |
 | `--manual` | Diagnostic run until Enter; mutually exclusive with duration; unavailable for prognostic mode. |
-| `--run-period-s SECONDS` | Prognostic start-to-start period; include duration plus enDAQ stop/remount/offload overhead. |
+| `--run-period-s SECONDS` | Prognostic start-to-start period; include duration plus startup/shutdown and enDAQ stop/remount/offload overhead. Gator and enDAQ signal export is deferred until the series ends. |
 | `--missed-start-tolerance-s SECONDS` | Permitted schedule lateness (`>= 0`). |
 | `--missed-start-policy abort` | Stop when a prognostic start is too late. Default. |
 | `--missed-start-policy start_late` | Start overdue run immediately and log lateness. |
