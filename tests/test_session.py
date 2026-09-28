@@ -167,6 +167,28 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(manifest["live_status"]["phase"], "success")
         self.assertEqual(manifest["storage"]["mode"], "nfs")
 
+    def test_controller_stop_safely_stops_a_timed_run(self) -> None:
+        gator = FakeAdapter("gator")
+        config = SessionConfig(
+            output_root=str(self.root),
+            run_duration_s=10,
+            gator=GatorConfig(enabled=True),
+        )
+        session = self._session(config, {"gator": gator}, session_id="stop-request")
+
+        def stop_during_first_wait(duration: float) -> None:
+            self.clock.sleep(duration)
+            session.request_stop()
+
+        session._sleep = stop_during_first_wait
+        manifest = session.run()
+
+        self.assertEqual(manifest["status"], "interrupted")
+        self.assertEqual(manifest["runs"][0]["status"], "interrupted")
+        self.assertEqual(gator.start_calls, 1)
+        self.assertEqual(gator.stop_calls, 1)
+        self.assertIn("Stop requested by controller.", manifest["runs"][0]["errors"])
+
     def test_strict_preflight_aborts_before_start(self) -> None:
         gator = FakeAdapter("gator", discovery_error="not connected")
         config = SessionConfig(

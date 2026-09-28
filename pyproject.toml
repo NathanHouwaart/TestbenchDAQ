@@ -11,6 +11,7 @@ dependencies = [
 
 [project.optional-dependencies]
 plotting = ["plotly>=5,<7"]
+service = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1"]
 
 [project.scripts]
 tbdaq = "tbdaq.__main__:main"

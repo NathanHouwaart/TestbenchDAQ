@@ -142,10 +142,15 @@ class Session:
                 self._config.run_count is None
                 or run_number <= self._config.run_count
             ):
+                if self._interrupt_requested:
+                    self._process_deferred_runs()
+                    return self._finish("interrupted", "Stop requested by controller.")
                 period = self._config.run_period_s or 0.0
                 planned_monotonic = base_monotonic + ((run_number - 1) * period)
                 planned_wall = base_wall + ((run_number - 1) * period)
-                self._wait_until(planned_monotonic)
+                if not self._wait_until(planned_monotonic):
+                    self._process_deferred_runs()
+                    return self._finish("interrupted", "Stop requested by controller.")
                 lateness = max(0.0, self._monotonic() - planned_monotonic)
                 schedule_warning = None
                 if lateness > self._config.missed_start_tolerance_s:
@@ -356,7 +361,9 @@ class Session:
             if self._config.run_duration_s is None:
                 self._input("Press Enter to stop the diagnostic run...")
             else:
-                self._wait_duration(self._config.run_duration_s)
+                if not self._wait_duration(self._config.run_duration_s):
+                    interrupted = True
+                    record["errors"].append("Stop requested by controller.")
         except (KeyboardInterrupt, EOFError):
             interrupted = True
             record["errors"].append("Measurement interrupted by user.")
@@ -663,15 +670,30 @@ class Session:
                 record["errors"].append(message)
                 _LOG.error(message)
 
-    def _wait_until(self, target_monotonic: float) -> None:
+    def request_stop(self) -> None:
+        """Request safe acquisition shutdown from a local controller.
+
+        Adapter cleanup remains owned by :meth:`run`; callers must not stop
+        recorder processes directly. Timed sessions notice this within 0.2 s.
+        """
+        self._interrupt_requested = True
+
+    @property
+    def session_dir(self) -> Path:
+        """The approved session root created for this acquisition."""
+        return self._session_dir
+
+    def _wait_until(self, target_monotonic: float) -> bool:
         while True:
+            if self._interrupt_requested:
+                return False
             remaining = target_monotonic - self._monotonic()
             if remaining <= 0:
-                return
+                return True
             self._sleep(min(remaining, 0.2))
 
-    def _wait_duration(self, duration_s: float) -> None:
-        self._wait_until(self._monotonic() + duration_s)
+    def _wait_duration(self, duration_s: float) -> bool:
+        return self._wait_until(self._monotonic() + duration_s)
 
     def _finish(self, status: str, reason: Optional[str] = None) -> dict[str, Any]:
         self._manifest["status"] = status
