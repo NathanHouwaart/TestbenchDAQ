@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import csv
+import logging
 from contextlib import ExitStack
 import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+_LOG = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +71,7 @@ def export_gator_signals(
     isa_dir.mkdir(parents=True, exist_ok=True)
     results: list[SignalFile] = []
     source_rel = str(gator_csv)
+    _LOG.info("Gator ISA-style export: reading raw CSV %s.", gator_csv)
 
     try:
         with gator_csv.open("r", newline="", encoding="utf-8") as fh:
@@ -106,13 +111,24 @@ def export_gator_signals(
 
     first_time_s = timed_rows[0][0]
     last_time_s = timed_rows[-1][0]
+    _LOG.info(
+        "Gator ISA-style export: writing %d samples into up to %d signal CSV files.",
+        len(timed_rows),
+        len(_GATOR_SENSOR_COLUMNS),
+    )
 
-    for col in _GATOR_SENSOR_COLUMNS:
+    for signal_number, col in enumerate(_GATOR_SENSOR_COLUMNS, start=1):
         if col not in header:
             continue
 
         alias = f"{gator_label}_{col}"
         out_path = isa_dir / f"{alias}.csv"
+        _LOG.info(
+            "Gator ISA-style export: writing signal %d/%d (%s).",
+            signal_number,
+            len(_GATOR_SENSOR_COLUMNS),
+            alias,
+        )
 
         try:
             with out_path.open("w", newline="", encoding="utf-8") as fh:

@@ -257,6 +257,13 @@ class Session:
     ) -> dict[str, Any]:
         self._set_live_status("starting", run_number)
         run_id = f"run_{run_number:02d}"
+        total_runs = "unlimited" if self._config.run_count is None else str(self._config.run_count)
+        _LOG.info(
+            "Run %02d/%s: starting %s acquisition.",
+            run_number,
+            total_runs,
+            ", ".join(sorted(active_adapters)),
+        )
         run_dir = self._session_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
         record: dict[str, Any] = {
@@ -305,6 +312,9 @@ class Session:
                 record["errors"].append(f"{family} start failed: {error}")
             else:
                 started[family] = active_adapters[family]
+
+        for family in started:
+            _LOG.info("Run %02d/%s: %s recording started.", run_number, total_runs, family)
 
         missing = [family for family in active_adapters if family not in started]
         if self._interrupt_requested:
@@ -403,6 +413,12 @@ class Session:
                 adapter_record["processing"] = {"status": "deferred"}
                 self._deferred_processing.append(
                     (record, family, adapter, run_dir, export_window)
+                )
+                _LOG.info(
+                    "Run %02d/%s: %s acquisition complete; signal CSV export deferred until scheduled runs finish.",
+                    run_number,
+                    total_runs,
+                    family,
                 )
                 deferred_processing = True
                 continue
@@ -507,10 +523,37 @@ class Session:
         return signals, complete
 
     def _process_deferred_runs(self) -> None:
-        for record, family, adapter, run_dir, window in self._deferred_processing:
+        task_count = len(self._deferred_processing)
+        if task_count:
+            self._set_live_status("processing")
+            _LOG.info(
+                "Scheduled acquisition complete. Starting deferred ISA-style signal CSV processing for %d task(s).",
+                task_count,
+            )
+        for task_number, (record, family, adapter, run_dir, window) in enumerate(
+            self._deferred_processing, start=1
+        ):
+            _LOG.info(
+                "Processing %d/%d: %s %s -> signal CSV files.",
+                task_number,
+                task_count,
+                record["run_id"],
+                family,
+            )
             try:
-                _signals, complete = self._process_adapter(
+                signals, _complete = self._process_adapter(
                     record, family, adapter, run_dir, window
+                )
+                successful = sum(signal.status == "success" for signal in signals)
+                failed = len(signals) - successful
+                _LOG.info(
+                    "Processing %d/%d: %s %s completed (%d successful, %d failed signal file(s)).",
+                    task_number,
+                    task_count,
+                    record["run_id"],
+                    family,
+                    successful,
+                    failed,
                 )
             except Exception as exc:
                 record["adapters"][family]["processing"] = {
@@ -521,6 +564,14 @@ class Session:
                 }
                 record["warnings"].append(
                     f"{family} deferred processing failed: {exc}"
+                )
+                _LOG.error(
+                    "Processing %d/%d: %s %s failed: %s",
+                    task_number,
+                    task_count,
+                    record["run_id"],
+                    family,
+                    exc,
                 )
             processing_states = [
                 item.get("processing", {}).get("status")
