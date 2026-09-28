@@ -21,7 +21,7 @@ import uvicorn
 
 from tbdaq.config import ConfigError, SessionConfig, session_config_from_mapping
 from tbdaq.session import Session
-from tbdaq.storage import StorageInfo, validate_output_storage
+from tbdaq.storage import StorageError, StorageInfo, validate_output_storage
 
 
 class ServiceError(RuntimeError):
@@ -171,7 +171,7 @@ class LocalServiceController:
                 "storage": _storage_dict(storage),
                 "configured_sources": configured_sources,
             }
-        except (ServiceError, ConfigError, OSError) as exc:
+        except (ServiceError, ConfigError, StorageError, OSError) as exc:
             return {"service": "unavailable", "error": str(exc)}
 
     def validate(self, request: RunRequest) -> dict[str, Any]:
@@ -180,7 +180,7 @@ class LocalServiceController:
             storage = validate_output_storage(
                 Path(config.output_root), allow_local_output=self._allow_local_output
             )
-        except (ServiceError, ConfigError, OSError) as exc:
+        except (ServiceError, ConfigError, StorageError, OSError) as exc:
             return {"valid": False, "errors": [str(exc)]}
         return {
             "valid": True,
