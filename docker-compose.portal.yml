@@ -24,7 +24,7 @@ services:
     depends_on: [portal-api]
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "8080:80"
     volumes:
       - ./portal/auth:/etc/nginx/auth:ro
     networks: [portal]
