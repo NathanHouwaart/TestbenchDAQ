@@ -4,6 +4,7 @@ from __future__ import annotations
 import glob
 import hashlib
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -171,15 +172,14 @@ class EndaqAdapter:
                 sample_rate = config.getSampleRate(channel)
             except Exception:
                 sample_rate = None
-            channels.append(
-                {
-                    "id": channel_id,
-                    "name": getattr(channel, "name", ""),
-                    "enabled": enabled,
-                    "sample_rate_hz": sample_rate,
-                    "subchannels": len(getattr(channel, "children", ())),
-                }
-            )
+            channels.append({
+                "id": channel_id,
+                "name": getattr(channel, "name", ""),
+                "enabled": enabled,
+                "sample_rate_hz": sample_rate,
+                "subchannels": len(getattr(channel, "children", ())),
+                **self._sample_rate_capabilities(config, channel),
+            })
         usage = shutil.disk_usage(self._mount_path)
         return {
             "serial": str(getattr(self._device, "serial", "")),
@@ -189,6 +189,45 @@ class EndaqAdapter:
             "recording_time_limit_s": config.recordingTimeLimit,
             "recording_size_limit_bytes": config.recordingSizeLimit,
             "channels": channels,
+        }
+
+    @staticmethod
+    def _sample_rate_capabilities(config: Any, channel: Any) -> dict[str, Any]:
+        """Read the recorder's own ConfigUI bounds for a channel's rate.
+
+        ConfigUI is device- and firmware-specific. Returning null fields when
+        it lacks a rate item is deliberate: callers must not infer a range.
+        """
+        empty = {
+            "sample_rate_min_hz": None,
+            "sample_rate_max_hz": None,
+            "supported_sample_rates_hz": [],
+        }
+        try:
+            config_id = config._getChannelConfigId(0x020000, channel)
+            item = config.items.get(config_id)
+        except Exception:
+            return empty
+        if item is None:
+            return empty
+
+        def finite_number(value: Any) -> int | float | None:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return None
+            return value if math.isfinite(value) else None
+
+        options = getattr(item, "options", {})
+        if isinstance(options, dict):
+            supported = [
+                value for value in sorted(options)
+                if finite_number(value) is not None
+            ]
+        else:
+            supported = []
+        return {
+            "sample_rate_min_hz": finite_number(getattr(item, "min", None)),
+            "sample_rate_max_hz": finite_number(getattr(item, "max", None)),
+            "supported_sample_rates_hz": supported,
         }
 
     # ------------------------------------------------------------------

@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from subprocess import CompletedProcess
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from tbdaq.adapters.endaq import EndaqAdapter, _format_bytes
@@ -31,12 +32,28 @@ class _FakeDevice:
         self.command = command
 
 
+class _FakeRateConfig:
+    def __init__(self):
+        self.items = {
+            123: SimpleNamespace(min=10, max=20_000, options={1000: "1 kHz", 20_000: "20 kHz"})
+        }
+
+    def _getChannelConfigId(self, _kind, _channel):
+        return 123
+
+
 class EndaqAdapterTests(unittest.TestCase):
     def test_format_bytes_includes_grouped_exact_value_and_gib(self) -> None:
         self.assertEqual(
             _format_bytes(7_585_497_088),
             "7,585,497,088 bytes (7.06 GiB)",
         )
+
+    def test_sample_rate_capabilities_come_from_recorder_config_ui(self) -> None:
+        capabilities = EndaqAdapter._sample_rate_capabilities(_FakeRateConfig(), object())
+        self.assertEqual(capabilities["sample_rate_min_hz"], 10)
+        self.assertEqual(capabilities["sample_rate_max_hz"], 20_000)
+        self.assertEqual(capabilities["supported_sample_rates_hz"], [1000, 20_000])
 
     def test_dismount_proves_start_even_when_library_returns_false(self) -> None:
         adapter = EndaqAdapter(EndaqConfig(enabled=True))

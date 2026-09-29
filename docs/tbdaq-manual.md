@@ -88,6 +88,12 @@ profile on it:
 tbdaq --config config.json endaq-info
 ```
 
+Each channel returned by `endaq-info` includes its configured
+`sample_rate_hz`, recorder-provided `sample_rate_min_hz` and
+`sample_rate_max_hz`, plus `supported_sample_rates_hz` when the recorder
+provides a discrete rate list. `null` bounds mean that the recorder did not
+expose a rate control for that channel; they are not guessed.
+
 | Status | Meaning |
 | --- | --- |
 | `0` | Successful session or inspection. |
