@@ -17,14 +17,26 @@ FSTAB_LINE="UUID=6430-3964 /mnt/endaq vfat noauto,nofail,users,uid=${INSTALL_UID
 FSTAB_TMP="$(mktemp)"
 trap 'rm -f "$FSTAB_TMP"' EXIT
 
-awk -v replacement="$FSTAB_LINE" '
-  $1 == "UUID=6430-3964" { print replacement; found++; next }
-  { print }
-  END { if (found != 1) exit 42 }
-' /etc/fstab > "$FSTAB_TMP" || {
-  echo "Expected exactly one UUID=6430-3964 entry in /etc/fstab; no changes made." >&2
-  exit 1
-}
+matching_entries="$(awk '$1 == "UUID=6430-3964" { count++ } END { print count + 0 }' /etc/fstab)"
+case "$matching_entries" in
+  0)
+    # A fresh Pi has no enDAQ entry. Add one exact, UUID-bound line rather
+    # than asking the operator to edit fstab manually.
+    cat /etc/fstab > "$FSTAB_TMP"
+    printf '\n%s\n' "$FSTAB_LINE" >> "$FSTAB_TMP"
+    ;;
+  1)
+    awk -v replacement="$FSTAB_LINE" '
+      $1 == "UUID=6430-3964" { print replacement; next }
+      { print }
+    ' /etc/fstab > "$FSTAB_TMP"
+    ;;
+  *)
+    echo "Found $matching_entries UUID=6430-3964 entries in /etc/fstab; no changes made." >&2
+    echo "Remove the ambiguity manually before rerunning the installer." >&2
+    exit 1
+    ;;
+esac
 
 if [[ ! -e /etc/fstab.tbdaq-backup ]]; then
   install -o root -g root -m 0644 /etc/fstab /etc/fstab.tbdaq-backup
@@ -37,6 +49,7 @@ if [[ -e /etc/udev/rules.d/99-endaq.rules ]] && \
 fi
 
 install -o root -g root -m 0644 "$FSTAB_TMP" /etc/fstab
+install -d -o root -g root -m 0755 /mnt/endaq
 install -o root -g root -m 0644 \
   "$PROJECT_DIR/udev/99-endaq.rules" /etc/udev/rules.d/99-endaq.rules
 systemctl daemon-reload
