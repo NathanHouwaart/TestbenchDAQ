@@ -26,18 +26,17 @@
   },
   "endaq": {
     "enabled": false,
-    "serial": null,
-    "model": null,
-    "mount_path": null,
-    "ide_converter_path": null,
-    "command_timeout_s": 30,
-    "remount_timeout_s": 120,
-    "minimum_free_space_bytes": 1073741824,
-    "estimated_bytes_per_second": null,
-    "recording_time_limit_s": null,
-    "recording_size_limit_bytes": null,
-    "delete_after_verified_offload": false,
-    "_channels_comment": "Range is selected by channel on the S3; add only settings you want TestbenchDAQ to enforce.",
-    "channels": {}
+    "_channels_comment": "Default S3-E100D40 channel profile. Name and subchannels document the recorder; only enabled and sample_rate_hz are enforced.",
+    "channels": [
+      {"enabled": true, "id": 8, "name": "100g PE Acceleration", "sample_rate_hz": 20000, "subchannels": 3},
+      {"enabled": null, "id": 20, "name": "Internal Pressure/Temperature/Humidity", "sample_rate_hz": null, "subchannels": 3},
+      {"enabled": null, "id": 47, "name": "IMU Rotation", "sample_rate_hz": null, "subchannels": 3},
+      {"enabled": true, "id": 59, "name": "Control Pad Pressure/Temperature/Humidity", "sample_rate_hz": 10, "subchannels": 3},
+      {"enabled": null, "id": 65, "name": "Absolute Orientation", "sample_rate_hz": null, "subchannels": 5},
+      {"enabled": null, "id": 70, "name": "Relative Orientation", "sample_rate_hz": null, "subchannels": 4},
+      {"enabled": true, "id": 76, "name": "Light Sensor", "sample_rate_hz": null, "subchannels": 2},
+      {"enabled": true, "id": 80, "name": "40g DC Acceleration", "sample_rate_hz": 4000, "subchannels": 3},
+      {"enabled": true, "id": 84, "name": "Rotation", "sample_rate_hz": 400, "subchannels": 3}
+    ]
   }
 }

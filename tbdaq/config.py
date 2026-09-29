@@ -31,6 +31,10 @@ class GatorConfig:
 class EndaqChannelConfig:
     enabled: Optional[bool] = None
     sample_rate_hz: Optional[float] = None
+    # Human-readable recorder metadata. It makes a checked-in configuration
+    # understandable without changing the configuration applied to the device.
+    name: Optional[str] = None
+    subchannels: Optional[int] = None
 
 
 @dataclass
@@ -164,6 +168,10 @@ class SessionConfig:
             for channel_id, channel in self.endaq.channels.items():
                 if channel_id < 0:
                     raise ConfigError("endaq channel IDs must be >= 0.")
+                if channel.name is not None and not channel.name.strip():
+                    raise ConfigError(f"endaq.channels.{channel_id}.name must not be empty.")
+                if channel.subchannels is not None and channel.subchannels < 1:
+                    raise ConfigError(f"endaq.channels.{channel_id}.subchannels must be >= 1.")
                 if channel.sample_rate_hz is not None and channel.sample_rate_hz <= 0:
                     raise ConfigError(
                         f"endaq.channels.{channel_id}.sample_rate_hz must be > 0."
@@ -187,7 +195,7 @@ _ENDAQ_KEYS = {
     "estimated_bytes_per_second", "recording_time_limit_s",
     "recording_size_limit_bytes", "delete_after_verified_offload", "channels",
 }
-_ENDAQ_CHANNEL_KEYS = {"enabled", "sample_rate_hz"}
+_ENDAQ_CHANNEL_KEYS = {"enabled", "sample_rate_hz", "name", "subchannels"}
 
 
 def _without_comments(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -225,10 +233,20 @@ def session_config_from_mapping(
     try:
         gator = GatorConfig(**gator_values)
         raw_channels = endaq_values.pop("channels", {})
-        if not isinstance(raw_channels, Mapping):
-            raise ConfigError("endaq.channels must be a JSON object keyed by channel ID.")
         channels: dict[int, EndaqChannelConfig] = {}
-        for raw_id, raw_settings in raw_channels.items():
+        if isinstance(raw_channels, Mapping):
+            channel_items = raw_channels.items()
+        elif isinstance(raw_channels, list):
+            channel_items = []
+            for entry in raw_channels:
+                if not isinstance(entry, Mapping):
+                    raise ConfigError("endaq.channels list entries must be JSON objects.")
+                if "id" not in entry:
+                    raise ConfigError("endaq.channels list entries require an id.")
+                channel_items.append((entry["id"], {key: value for key, value in entry.items() if key != "id"}))
+        else:
+            raise ConfigError("endaq.channels must be an object keyed by ID or a list of channel objects.")
+        for raw_id, raw_settings in channel_items:
             try:
                 channel_id = int(raw_id)
             except (TypeError, ValueError) as exc:

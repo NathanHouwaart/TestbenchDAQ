@@ -182,6 +182,29 @@ class ConfigTests(unittest.TestCase):
                 base_dir=self.base,
             )
 
+    def test_endaq_channel_list_is_readable_and_supported(self) -> None:
+        config = session_config_from_mapping(
+            {
+                "endaq": {
+                    "enabled": True,
+                    "channels": [
+                        {
+                            "id": 8,
+                            "name": "100g PE Acceleration",
+                            "enabled": True,
+                            "sample_rate_hz": 20000,
+                            "subchannels": 3,
+                        },
+                        {"id": 20, "name": "Internal sensors", "subchannels": 3},
+                    ],
+                }
+            },
+            base_dir=self.base,
+        )
+        self.assertTrue(config.endaq.channels[8].enabled)
+        self.assertEqual(config.endaq.channels[8].name, "100g PE Acceleration")
+        self.assertEqual(config.endaq.channels[20].subchannels, 3)
+
     def test_session_name_and_late_start_policy_are_validated(self) -> None:
         config = session_config_from_mapping(
             {
