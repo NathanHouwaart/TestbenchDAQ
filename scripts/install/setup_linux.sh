@@ -60,7 +60,11 @@ fi
 "$PROJECT_DIR/.venv/bin/python" -m pip install -e "$PROJECT_DIR"
 
 $want_gator && "$SCRIPT_DIR/install_gator.sh"
-$want_endaq && "$SCRIPT_DIR/install_endaq.sh"
+if $want_endaq; then
+  endaq_args=()
+  $non_interactive && endaq_args+=(--non-interactive)
+  "$SCRIPT_DIR/install_endaq.sh" "${endaq_args[@]}"
+fi
 
 "$PROJECT_DIR/.venv/bin/tbdaq" --help
 echo "TestbenchDAQ setup completed."

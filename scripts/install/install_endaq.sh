@@ -2,6 +2,32 @@
 # Install deterministic enDAQ mounting and perform a read-only FAT check.
 set -euo pipefail
 
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/install/install_endaq.sh [OPTIONS]
+
+Install the deterministic enDAQ mount rule, check the recorder's FAT
+filesystem, and mount it when it is safe to do so.
+
+Options:
+  --repair            Automatically repair a dirty FAT filesystem, then mount it
+  --non-interactive   Do not prompt; use --repair to permit filesystem changes
+  --help, -h          Show this help
+EOF
+}
+
+repair=false
+non_interactive=false
+while (($#)); do
+  case "$1" in
+    --repair) repair=true ;;
+    --non-interactive) non_interactive=true ;;
+    --help|-h) usage; exit 0 ;;
+    *) echo "Unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
@@ -76,9 +102,42 @@ set -e
 if [[ "$FSCK_STATUS" -ne 0 ]]; then
   echo >&2
   echo "The enDAQ FAT check reported errors (exit $FSCK_STATUS)." >&2
-  echo "It has been left unmounted; no repair was attempted." >&2
-  echo "Paste the output above into the TestbenchDAQ conversation before repairing it." >&2
-  exit "$FSCK_STATUS"
+  echo "The recorder must be repaired before it can be mounted for acquisition." >&2
+
+  if ! $repair; then
+    if $non_interactive || [[ ! -t 0 ]]; then
+      echo "No repair was attempted. After confirming the recorder is not recording," >&2
+      echo "rerun: sudo ./scripts/install/install_endaq.sh --repair" >&2
+      exit "$FSCK_STATUS"
+    fi
+
+    echo >&2
+    echo "Repairing modifies the recorder's FAT filesystem." >&2
+    read -r -p "Confirm the recorder is stopped and repair it now? [y/N] " answer
+    if [[ "$answer" =~ ^[Yy]([Ee][Ss])?$ ]]; then
+      repair=true
+    else
+      echo "No repair was attempted; the recorder remains unmounted." >&2
+      exit "$FSCK_STATUS"
+    fi
+  fi
+
+  echo "Repairing enDAQ FAT filesystem on $BLOCK_DEVICE..."
+  set +e
+  fsck.vfat -a "$BLOCK_DEVICE"
+  REPAIR_STATUS=$?
+  set -e
+
+  echo "Verifying repaired enDAQ filesystem..."
+  set +e
+  fsck.vfat -n "$BLOCK_DEVICE"
+  VERIFY_STATUS=$?
+  set -e
+  if [[ "$VERIFY_STATUS" -ne 0 ]]; then
+    echo "The enDAQ filesystem could not be verified after repair (repair exit $REPAIR_STATUS, verification exit $VERIFY_STATUS)." >&2
+    echo "It remains unmounted; inspect the output above before continuing." >&2
+    exit "$VERIFY_STATUS"
+  fi
 fi
 
 systemctl start mnt-endaq.mount

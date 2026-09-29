@@ -66,8 +66,16 @@ reconnect the Gator before recording.
 
 `install_endaq.sh` installs the deterministic mount rule and performs a
 read-only FAT check. It backs up the relevant `/etc/fstab` and udev files
-before changing them. If the FAT check reports an error, it leaves the device
-unmounted and does not repair its filesystem.
+before changing them. If the recorder needs a FAT repair, an interactive run
+explains the condition and asks once whether to repair and continue. For
+unattended setup, filesystem changes require the explicit `--repair` flag:
+
+```bash
+sudo ./scripts/install/install_endaq.sh --repair
+```
+
+Only confirm a repair after ensuring the recorder is not recording; it changes
+the recorder's filesystem metadata.
 
 ## 3. Create and inspect your configuration
 
