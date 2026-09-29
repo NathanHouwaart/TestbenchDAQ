@@ -193,9 +193,16 @@ class ConfigTests(unittest.TestCase):
                             "name": "100g PE Acceleration",
                             "enabled": True,
                             "sample_rate_hz": 20000,
+                            "sample_rate_min_hz": 10,
+                            "sample_rate_max_hz": 20000,
                             "subchannels": 3,
                         },
-                        {"id": 20, "name": "Internal sensors", "subchannels": 3},
+                        {
+                            "id": 20,
+                            "name": "Internal sensors",
+                            "supported_sample_rates_hz": [1, 10],
+                            "subchannels": 3,
+                        },
                     ],
                 }
             },
@@ -203,6 +210,8 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertTrue(config.endaq.channels[8].enabled)
         self.assertEqual(config.endaq.channels[8].name, "100g PE Acceleration")
+        self.assertEqual(config.endaq.channels[8].sample_rate_max_hz, 20_000)
+        self.assertEqual(config.endaq.channels[20].supported_sample_rates_hz, [1, 10])
         self.assertEqual(config.endaq.channels[20].subchannels, 3)
 
     def test_session_name_and_late_start_policy_are_validated(self) -> None:

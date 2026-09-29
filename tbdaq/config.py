@@ -35,6 +35,9 @@ class EndaqChannelConfig:
     # understandable without changing the configuration applied to the device.
     name: Optional[str] = None
     subchannels: Optional[int] = None
+    sample_rate_min_hz: Optional[float] = None
+    sample_rate_max_hz: Optional[float] = None
+    supported_sample_rates_hz: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -172,6 +175,18 @@ class SessionConfig:
                     raise ConfigError(f"endaq.channels.{channel_id}.name must not be empty.")
                 if channel.subchannels is not None and channel.subchannels < 1:
                     raise ConfigError(f"endaq.channels.{channel_id}.subchannels must be >= 1.")
+                if channel.sample_rate_min_hz is not None and channel.sample_rate_min_hz <= 0:
+                    raise ConfigError(f"endaq.channels.{channel_id}.sample_rate_min_hz must be > 0.")
+                if channel.sample_rate_max_hz is not None and channel.sample_rate_max_hz <= 0:
+                    raise ConfigError(f"endaq.channels.{channel_id}.sample_rate_max_hz must be > 0.")
+                if (
+                    channel.sample_rate_min_hz is not None
+                    and channel.sample_rate_max_hz is not None
+                    and channel.sample_rate_min_hz > channel.sample_rate_max_hz
+                ):
+                    raise ConfigError(f"endaq.channels.{channel_id} has an invalid sample-rate range.")
+                if any(rate <= 0 for rate in channel.supported_sample_rates_hz):
+                    raise ConfigError(f"endaq.channels.{channel_id}.supported_sample_rates_hz must contain positive values.")
                 if channel.sample_rate_hz is not None and channel.sample_rate_hz <= 0:
                     raise ConfigError(
                         f"endaq.channels.{channel_id}.sample_rate_hz must be > 0."
@@ -195,7 +210,10 @@ _ENDAQ_KEYS = {
     "estimated_bytes_per_second", "recording_time_limit_s",
     "recording_size_limit_bytes", "delete_after_verified_offload", "channels",
 }
-_ENDAQ_CHANNEL_KEYS = {"enabled", "sample_rate_hz", "name", "subchannels"}
+_ENDAQ_CHANNEL_KEYS = {
+    "enabled", "sample_rate_hz", "name", "subchannels", "sample_rate_min_hz",
+    "sample_rate_max_hz", "supported_sample_rates_hz",
+}
 
 
 def _without_comments(values: Mapping[str, Any]) -> dict[str, Any]:

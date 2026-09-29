@@ -78,11 +78,12 @@ tbdaq [OPTIONS] [run | show-config | endaq-info | endaq-stop]
 ## JSON-only settings and exit status
 
 `endaq.channels` accepts either the legacy ID-keyed object or a readable list of
-channel objects. List entries require `id`; `name` and `subchannels` are
-informational, while only `enabled` and `sample_rate_hz` are enforced. The
-example configuration includes the complete S3-E100D40 profile, so operators
-do not need to guess channel IDs. Inspect another recorder before using this
-profile on it:
+channel objects. List entries require `id`; `name`, `subchannels`,
+`sample_rate_min_hz`, `sample_rate_max_hz`, and
+`supported_sample_rates_hz` are informational, while only `enabled` and
+`sample_rate_hz` are enforced. The example configuration includes the complete
+S3-E100D40 profile, so operators do not need to guess channel IDs or valid
+rates. Inspect another recorder before using this profile on it:
 
 ```bash
 tbdaq --config config.json endaq-info
