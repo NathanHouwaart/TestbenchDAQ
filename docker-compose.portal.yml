@@ -1,4 +1,6 @@
 services:
+  # Standalone development preview only. Production deployment belongs in the
+  # ML-Machine-Gateway Compose stack, where Nginx serves /data/.
   portal-api:
     build:
       context: .
@@ -24,7 +26,7 @@ services:
     depends_on: [portal-api]
     restart: unless-stopped
     ports:
-      - "8081:80"
+      - "127.0.0.1:8081:80"
     volumes:
       - ./portal/auth:/etc/nginx/auth:ro
     networks: [portal]

@@ -3,7 +3,9 @@
 This deployment keeps instrument control on each acquisition machine. The
 server at `192.168.0.189` stores data, hosts a browser-only portal, and runs
 one background conversion worker. The portal has no endpoint that can start,
-stop, or configure a Gator or enDAQ.
+stop, or configure a Gator or enDAQ. In production, these containers are
+owned by the ML-Machine-Gateway Compose stack and exposed only through its
+authenticated `/data/` route.
 
 ## Install and update from GitHub
 
@@ -27,22 +29,26 @@ git clone https://github.com/NathanHouwaart/TestbenchDAQ.git /opt/testbenchdaq
 cd /opt/testbenchdaq
 ```
 
-Configure the NFS exports in the next section, then create the portal login
-file and start the containers:
+Configure the NFS exports in the next section. Until image publishing is set
+up, build local images for the Machine Gateway from this checkout:
 
 ```bash
-mkdir -p portal/auth
-docker run --rm --entrypoint htpasswd httpd:2.4-alpine \
-  -Bbn viewer 'choose-a-strong-password' > portal/auth/.htpasswd
-docker compose -f docker-compose.portal.yml up -d --build
+docker build -t testbenchdaq-portal-api:local -f portal/api/Dockerfile .
+docker build -t testbenchdaq-portal-web:local -f portal/web/Dockerfile .
+docker build -t testbenchdaq-processor:local -f portal/processor/Dockerfile .
 ```
 
-To update the portal later:
+Configure the Machine Gateway `.env` with those three tags and start it with
+its `compose.yml` plus `compose.apps.yml`. It serves the portal at
+`http://192.168.0.189/data/`.
+
+To update the portal later, rebuild the three images and restart the Machine
+Gateway application stack. The TestbenchDAQ Compose file is only a local
+standalone preview:
 
 ```bash
 cd /opt/testbenchdaq
 git pull --ff-only
-docker compose -f docker-compose.portal.yml up -d --build
 ```
 
 Measurement data remains in `/srv/testbenchdaq`, outside the Git checkout and
@@ -338,9 +344,9 @@ rate; leave at least a two-times margin. If it does not, lower the Gator sample
 rate, improve the wired network/server disk, or change the acquisition design
 to use a suitable local high-speed buffer.
 
-## Run the portal with Docker Compose
+## Standalone local portal preview
 
-Install Docker Engine and the Docker Compose plugin on the server. The portal
+For local development only, Docker Compose can run the portal directly. The portal
 API reads `/srv/testbenchdaq` through a read-only container volume. A separate
 single-worker `processor` container has write access only to create derived
 signal CSV files and update processing status. NFS remains a host service; do
@@ -359,11 +365,11 @@ Build and start the portal from the repository root:
 docker compose -f docker-compose.portal.yml up -d --build
 ```
 
-It serves these LAN URLs after authentication:
+It binds only to the local machine at `http://127.0.0.1:8081/data/`.
 
-- `http://192.168.0.189/data/` — all machines and server storage health
-- `http://192.168.0.189/data/wentelteef/`
-- `http://192.168.0.189/data/knarskast/`
+For a production portal URL, use the ML-Machine-Gateway route
+`http://192.168.0.189/data/`.
+
 
 The React frontend refreshes manifest status every five seconds. It shows
 **Recording**, **Finalising raw data**, **Queued for processing**,
