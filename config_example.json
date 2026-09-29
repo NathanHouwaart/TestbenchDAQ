@@ -28,15 +28,80 @@
     "enabled": false,
     "_channels_comment": "Verified S3-E100D40 profile for recorder S0016418. Name, subchannels, and rate limits are informational; only enabled and sample_rate_hz are enforced.",
     "channels": [
-      {"enabled": true, "id": 8, "name": "100g PE Acceleration", "sample_rate_hz": 20000, "sample_rate_min_hz": 10, "sample_rate_max_hz": 20000, "subchannels": 3},
-      {"_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.", "enabled": null, "id": 20, "name": "Internal Pressure/Temperature/Humidity", "sample_rate_hz": null, "subchannels": 3},
-      {"_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.", "enabled": null, "id": 47, "name": "IMU Rotation", "sample_rate_hz": null, "subchannels": 3},
-      {"enabled": true, "id": 59, "name": "Control Pad Pressure/Temperature/Humidity", "sample_rate_hz": 10, "sample_rate_min_hz": 1, "sample_rate_max_hz": 10, "subchannels": 3},
-      {"_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.", "enabled": null, "id": 65, "name": "Absolute Orientation", "sample_rate_hz": null, "subchannels": 5},
-      {"_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.", "enabled": null, "id": 70, "name": "Relative Orientation", "sample_rate_hz": null, "subchannels": 4},
-      {"_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.", "enabled": true, "id": 76, "name": "Light Sensor", "sample_rate_hz": null, "subchannels": 2},
-      {"enabled": true, "id": 80, "name": "40g DC Acceleration", "sample_rate_hz": 4000, "supported_sample_rates_hz": [16, 32, 63, 125, 250, 500, 1000, 2000, 4000], "subchannels": 3},
-      {"enabled": true, "id": 84, "name": "Rotation", "sample_rate_hz": 400, "supported_sample_rates_hz": [25, 50, 100, 200, 400, 800, 1600, 3200], "subchannels": 3}
+      {
+        "enabled": true,
+        "id": 8,
+        "name": "100g PE Acceleration",
+        "sample_rate_hz": 20000,
+        "sample_rate_min_hz": 10,
+        "sample_rate_max_hz": 20000,
+        "subchannels": 3
+      },
+      {
+        "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
+        "enabled": null,
+        "id": 20,
+        "name": "Internal Pressure/Temperature/Humidity",
+        "sample_rate_hz": null,
+        "subchannels": 3
+      },
+      {
+        "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
+        "enabled": null,
+        "id": 47,
+        "name": "IMU Rotation",
+        "sample_rate_hz": null,
+        "subchannels": 3
+      },
+      {
+        "enabled": true,
+        "id": 59,
+        "name": "Control Pad Pressure/Temperature/Humidity",
+        "sample_rate_hz": 10,
+        "sample_rate_min_hz": 1,
+        "sample_rate_max_hz": 10,
+        "subchannels": 3
+      },
+      {
+        "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
+        "enabled": null,
+        "id": 65,
+        "name": "Absolute Orientation",
+        "sample_rate_hz": null,
+        "subchannels": 5
+      },
+      {
+        "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
+        "enabled": null,
+        "id": 70,
+        "name": "Relative Orientation",
+        "sample_rate_hz": null,
+        "subchannels": 4
+      },
+      {
+        "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
+        "enabled": true,
+        "id": 76,
+        "name": "Light Sensor",
+        "sample_rate_hz": null,
+        "subchannels": 2
+      },
+      {
+        "enabled": true,
+        "id": 80,
+        "name": "40g DC Acceleration",
+        "sample_rate_hz": 4000,
+        "supported_sample_rates_hz": [16, 32, 63, 125, 250, 500, 1000, 2000, 4000],
+        "subchannels": 3
+      },
+      {
+        "enabled": true,
+        "id": 84,
+        "name": "Rotation",
+        "sample_rate_hz": 400,
+        "supported_sample_rates_hz": [25, 50, 100, 200, 400, 800, 1600, 3200],
+        "subchannels": 3
+      }
     ]
   }
 }
