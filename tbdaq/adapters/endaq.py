@@ -193,22 +193,22 @@ class EndaqAdapter:
 
     @staticmethod
     def _sample_rate_capabilities(config: Any, channel: Any) -> dict[str, Any]:
-        """Read the recorder's own ConfigUI bounds for a channel's rate.
+        """Read the recorder's own ConfigUI rate controls for a channel.
 
-        ConfigUI is device- and firmware-specific. Returning null fields when
-        it lacks a rate item is deliberate: callers must not infer a range.
+        ConfigUI is device- and firmware-specific. A rate can belong to the
+        parent channel or to one or more subchannels, so inspect all matching
+        ConfigItems rather than assuming a parent-level control exists.
         """
         empty = {
             "sample_rate_min_hz": None,
             "sample_rate_max_hz": None,
             "supported_sample_rates_hz": [],
+            "sample_rate_controls": [],
         }
         try:
-            config_id = config._getChannelConfigId(0x020000, channel)
-            item = config.items.get(config_id)
+            channel_id = int(channel.id)
+            items = config.items.items()
         except Exception:
-            return empty
-        if item is None:
             return empty
 
         def finite_number(value: Any) -> int | float | None:
@@ -216,18 +216,38 @@ class EndaqAdapter:
                 return None
             return value if math.isfinite(value) else None
 
-        options = getattr(item, "options", {})
-        if isinstance(options, dict):
-            supported = [
-                value for value in sorted(options)
-                if finite_number(value) is not None
-            ]
-        else:
-            supported = []
+        controls = []
+        for raw_config_id, item in items:
+            try:
+                config_id = int(raw_config_id)
+            except (TypeError, ValueError):
+                continue
+            if config_id & 0xFF0000 != 0x020000 or config_id & 0xFF != channel_id:
+                continue
+            subchannel_id = (config_id >> 8) & 0xFF
+            options = getattr(item, "options", {})
+            supported = (
+                [value for value in sorted(options) if finite_number(value) is not None]
+                if isinstance(options, dict)
+                else []
+            )
+            controls.append({
+                "scope": "channel" if subchannel_id == 0xFF else "subchannel",
+                "subchannel_id": None if subchannel_id == 0xFF else subchannel_id,
+                "sample_rate_min_hz": finite_number(getattr(item, "min", None)),
+                "sample_rate_max_hz": finite_number(getattr(item, "max", None)),
+                "supported_sample_rates_hz": supported,
+            })
+
+        controls.sort(key=lambda value: (value["scope"] != "channel", value["subchannel_id"] or -1))
+        parent = next((control for control in controls if control["scope"] == "channel"), None)
+        if parent is None:
+            return {**empty, "sample_rate_controls": controls}
         return {
-            "sample_rate_min_hz": finite_number(getattr(item, "min", None)),
-            "sample_rate_max_hz": finite_number(getattr(item, "max", None)),
-            "supported_sample_rates_hz": supported,
+            "sample_rate_min_hz": parent["sample_rate_min_hz"],
+            "sample_rate_max_hz": parent["sample_rate_max_hz"],
+            "supported_sample_rates_hz": parent["supported_sample_rates_hz"],
+            "sample_rate_controls": controls,
         }
 
     # ------------------------------------------------------------------

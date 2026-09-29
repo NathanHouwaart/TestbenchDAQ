@@ -35,11 +35,11 @@ class _FakeDevice:
 class _FakeRateConfig:
     def __init__(self):
         self.items = {
-            123: SimpleNamespace(min=10, max=20_000, options={1000: "1 kHz", 20_000: "20 kHz"})
+            0x02FF08: SimpleNamespace(
+                min=10, max=20_000, options={1000: "1 kHz", 20_000: "20 kHz"}
+            ),
+            0x020108: SimpleNamespace(min=20, max=10_000, options={}),
         }
-
-    def _getChannelConfigId(self, _kind, _channel):
-        return 123
 
 
 class EndaqAdapterTests(unittest.TestCase):
@@ -50,10 +50,23 @@ class EndaqAdapterTests(unittest.TestCase):
         )
 
     def test_sample_rate_capabilities_come_from_recorder_config_ui(self) -> None:
-        capabilities = EndaqAdapter._sample_rate_capabilities(_FakeRateConfig(), object())
+        capabilities = EndaqAdapter._sample_rate_capabilities(
+            _FakeRateConfig(), SimpleNamespace(id=8)
+        )
         self.assertEqual(capabilities["sample_rate_min_hz"], 10)
         self.assertEqual(capabilities["sample_rate_max_hz"], 20_000)
         self.assertEqual(capabilities["supported_sample_rates_hz"], [1000, 20_000])
+        self.assertEqual(len(capabilities["sample_rate_controls"]), 2)
+        self.assertEqual(capabilities["sample_rate_controls"][1]["subchannel_id"], 1)
+
+    def test_subchannel_rate_controls_are_reported_without_a_parent_control(self) -> None:
+        config = _FakeRateConfig()
+        config.items = {0x02012F: SimpleNamespace(min=1, max=200, options={})}
+        capabilities = EndaqAdapter._sample_rate_capabilities(
+            config, SimpleNamespace(id=47)
+        )
+        self.assertIsNone(capabilities["sample_rate_min_hz"])
+        self.assertEqual(capabilities["sample_rate_controls"][0]["scope"], "subchannel")
 
     def test_dismount_proves_start_even_when_library_returns_false(self) -> None:
         adapter = EndaqAdapter(EndaqConfig(enabled=True))

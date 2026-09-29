@@ -92,8 +92,11 @@ tbdaq --config config.json endaq-info
 Each channel returned by `endaq-info` includes its configured
 `sample_rate_hz`, recorder-provided `sample_rate_min_hz` and
 `sample_rate_max_hz`, plus `supported_sample_rates_hz` when the recorder
-provides a discrete rate list. `null` bounds mean that the recorder did not
-expose a rate control for that channel; they are not guessed.
+provides a discrete rate list. `sample_rate_controls` lists every matching
+ConfigUI control and identifies whether it belongs to the parent channel or a
+subchannel. `null` parent bounds mean only that no parent-channel control was
+found; inspect `sample_rate_controls` before concluding that a channel has no
+configurable rate.
 
 | Status | Meaning |
 | --- | --- |
