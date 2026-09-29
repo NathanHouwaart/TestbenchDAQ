@@ -75,7 +75,9 @@ if [[ -e /etc/udev/rules.d/99-endaq.rules ]] && \
 fi
 
 install -o root -g root -m 0644 "$FSTAB_TMP" /etc/fstab
-install -d -o root -g root -m 0755 /mnt/endaq
+# Do not chmod/chown an existing mount point: it may already be the recorder's
+# vfat filesystem, whose ownership and mode cannot be changed that way.
+mkdir -p /mnt/endaq
 install -o root -g root -m 0644 \
   "$PROJECT_DIR/udev/99-endaq.rules" /etc/udev/rules.d/99-endaq.rules
 systemctl daemon-reload
