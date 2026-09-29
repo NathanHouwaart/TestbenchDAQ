@@ -55,7 +55,9 @@ install -o root -g root -m 0644 \
 systemctl daemon-reload
 udevadm control --reload-rules
 
-BLOCK_DEVICE="$(findmnt --noheadings --raw --types vfat --output SOURCE --target /mnt/endaq | tail -n 1)"
+# A freshly configured Pi has no mount yet.  `findmnt` signals that with a
+# non-zero exit status, which is expected here rather than an installer error.
+BLOCK_DEVICE="$(findmnt --noheadings --raw --types vfat --output SOURCE --target /mnt/endaq | tail -n 1 || true)"
 if [[ -z "$BLOCK_DEVICE" ]]; then
   BLOCK_DEVICE=/dev/disk/by-uuid/6430-3964
 fi
