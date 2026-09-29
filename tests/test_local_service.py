@@ -21,13 +21,14 @@ class FakeSession:
         self.session_dir = Path(config.output_root) / session_id
         self.session_dir.mkdir(parents=True)
         self.stop_requested = threading.Event()
+        self.complete_requested = threading.Event()
         self.recording = threading.Event()
 
     def run(self):
         self._write("measuring")
         self.recording.set()
         self.stop_requested.wait(timeout=2)
-        status = "interrupted" if self.stop_requested.is_set() else "success"
+        status = "success" if self.complete_requested.is_set() else "interrupted" if self.stop_requested.is_set() else "success"
         self._write(status)
         return {
             "status": status,
@@ -36,6 +37,10 @@ class FakeSession:
         }
 
     def request_stop(self):
+        self.stop_requested.set()
+
+    def request_complete(self):
+        self.complete_requested.set()
         self.stop_requested.set()
 
     def _write(self, phase: str):
@@ -142,3 +147,17 @@ class LocalServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ServiceError, "busy"):
             controller.start(self._request())
         controller.finalise()
+
+    def test_controller_complete_is_not_reported_as_an_abort(self):
+        controller = LocalServiceController(
+            self.config_path, allow_local_output=True, session_factory=FakeSession,
+        )
+        controller.start(self._request())
+        deadline = time.time() + 1
+        while controller.status()["run"]["state"] != "recording" and time.time() < deadline:
+            time.sleep(0.01)
+        controller.complete()
+        deadline = time.time() + 1
+        while controller.status()["run"]["state"] == "recording" and time.time() < deadline:
+            time.sleep(0.01)
+        self.assertEqual(controller.status()["run"]["state"], "completed")

@@ -8,6 +8,15 @@ services:
       - /srv/testbenchdaq:/data:ro
     networks: [portal]
 
+  processor:
+    build:
+      context: .
+      dockerfile: portal/processor/Dockerfile
+    restart: unless-stopped
+    volumes:
+      - /srv/testbenchdaq:/data
+    networks: [portal]
+
   portal-web:
     build:
       context: .

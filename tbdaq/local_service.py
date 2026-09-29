@@ -203,6 +203,9 @@ class LocalServiceController:
             except Exception as exc:
                 raise ServiceError(f"Could not create DAQ session: {exc}") from exc
             self._session = session
+            storage = self._storage_from_machine_config(load_machine_config(self._config_path))
+            if storage.mode == "nfs" and hasattr(session, "enable_server_processing"):
+                session.enable_server_processing()
             self._request = request
             self._terminal_manifest = None
             self._error = None
@@ -214,12 +217,23 @@ class LocalServiceController:
                 "run_root": str(session.session_dir / "run_01"),
             }
 
-    def finalise(self) -> dict[str, Any]:
+    def complete(self) -> dict[str, Any]:
         with self._lock:
             if self._session is None or self._thread is None or not self._thread.is_alive():
-                raise ServiceError("No active TestbenchDAQ session to finalise.")
+                raise ServiceError("No active TestbenchDAQ session to complete.")
+            self._session.request_complete()
+            return self.status()
+
+    def abort(self) -> dict[str, Any]:
+        with self._lock:
+            if self._session is None or self._thread is None or not self._thread.is_alive():
+                raise ServiceError("No active TestbenchDAQ session to abort.")
             self._session.request_stop()
             return self.status()
+
+    def finalise(self) -> dict[str, Any]:
+        """Backward-compatible alias for the former interrupting endpoint."""
+        return self.abort()
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -242,14 +256,17 @@ class LocalServiceController:
                     "error": error,
                 },
             }
+        latest = _read_manifest(session.session_dir / "session_manifest.json")
+        if not latest.get("status"):
+            latest = terminal or latest
         return {
             "service": "ready",
             "run": {
-                "state": _terminal_state(terminal, error),
+                "state": _terminal_state(latest, error),
                 "session_id": request.session_id,
-                "run_number": _current_run(terminal),
+                "run_number": _current_run(latest),
                 "run_root": str(session.session_dir / "run_01"),
-                "error": error or (terminal or {}).get("abort_reason"),
+                "error": error or (latest or {}).get("abort_reason"),
             },
         }
 
@@ -313,10 +330,17 @@ def create_app(machine_config_path: Path, *, allow_local_output: bool = False) -
         except ServiceError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    @app.post("/runs/finalise")
-    def finalise() -> dict[str, Any]:
+    @app.post("/runs/complete")
+    def complete() -> dict[str, Any]:
         try:
-            return controller.finalise()
+            return controller.complete()
+        except ServiceError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/runs/abort")
+    def abort() -> dict[str, Any]:
+        try:
+            return controller.abort()
         except ServiceError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -347,6 +371,8 @@ def _active_state(manifest: Mapping[str, Any]) -> str:
         return "recording"
     if phase in {"stopping", "processing"}:
         return "finalising"
+    if phase == "queued":
+        return "queued"
     return "starting"
 
 
@@ -356,6 +382,10 @@ def _terminal_state(manifest: Mapping[str, Any] | None, error: str | None) -> st
     status = str((manifest or {}).get("status", "failed"))
     if status in {"success", "partial"}:
         return "completed"
+    if status == "processing":
+        return "queued"
+    if status == "processing_failed":
+        return "processing_failed"
     if status in {"aborted", "interrupted"}:
         return "aborted"
     return "failed"

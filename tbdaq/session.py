@@ -14,6 +14,7 @@ from typing import Any, Callable, Mapping, Optional
 
 from tbdaq.config import SessionConfig
 from tbdaq.isa_export import ExportWindow, SignalFile, write_signal_map
+from tbdaq.processor import write_processing_request
 from tbdaq.storage import StorageInfo, validate_output_storage
 
 _LOG = logging.getLogger(__name__)
@@ -46,6 +47,8 @@ class Session:
         self._sleep = sleep
         self._input = input_fn
         self._interrupt_requested = False
+        self._complete_requested = False
+        self._server_processing = False
         self._storage = storage_validator(
             Path(config.output_root), allow_local_output=allow_local_output
         )
@@ -218,6 +221,13 @@ class Session:
                 run_number += 1
 
             self._process_deferred_runs()
+            if self._server_processing:
+                self._queue_server_processing()
+                self._manifest["status"] = "processing"
+                self._manifest["ended_at_utc"] = _iso_utc(self._clock())
+                self._set_live_status("queued")
+                write_processing_request(self._session_dir)
+                return self._manifest
             statuses = [run["status"] for run in self._manifest["runs"]]
             status = "success" if statuses and all(item == "success" for item in statuses) else "partial"
             return self._finish(status)
@@ -362,8 +372,9 @@ class Session:
                 self._input("Press Enter to stop the diagnostic run...")
             else:
                 if not self._wait_duration(self._config.run_duration_s):
-                    interrupted = True
-                    record["errors"].append("Stop requested by controller.")
+                    interrupted = self._interrupt_requested
+                    if interrupted:
+                        record["errors"].append("Stop requested by controller.")
         except (KeyboardInterrupt, EOFError):
             interrupted = True
             record["errors"].append("Measurement interrupted by user.")
@@ -416,6 +427,10 @@ class Session:
         self._set_live_status("processing", run_number)
         for family, adapter in started.items():
             adapter_record = record["adapters"][family]
+            if self._server_processing:
+                adapter_record["processing"] = {"status": "queued"}
+                deferred_processing = True
+                continue
             if self._config.mode == "prognostic" and family in {"endaq", "gator"}:
                 adapter_record["processing"] = {"status": "deferred"}
                 self._deferred_processing.append(
@@ -466,6 +481,14 @@ class Session:
             record["status"] = "success"
         record["ended_at_utc"] = _iso_utc(self._clock())
         return record
+
+    def _queue_server_processing(self) -> None:
+        """Publish a durable, post-offload conversion request for the portal server."""
+        self._manifest["processing"] = {
+            "status": "queued",
+            "attempts": 0,
+            "last_error": None,
+        }
 
     @staticmethod
     def _adapters_requiring_cleanup(
@@ -678,6 +701,18 @@ class Session:
         """
         self._interrupt_requested = True
 
+    def request_complete(self) -> None:
+        """End the current measurement normally after recorder shutdown.
+
+        This is distinct from :meth:`request_stop`: a controller uses it when
+        the PLC test completed, so retained data is not labelled interrupted.
+        """
+        self._complete_requested = True
+
+    def enable_server_processing(self) -> None:
+        """Use the portal worker after raw data has safely reached NFS."""
+        self._server_processing = True
+
     @property
     def session_dir(self) -> Path:
         """The approved session root created for this acquisition."""
@@ -685,7 +720,7 @@ class Session:
 
     def _wait_until(self, target_monotonic: float) -> bool:
         while True:
-            if self._interrupt_requested:
+            if self._interrupt_requested or self._complete_requested:
                 return False
             remaining = target_monotonic - self._monotonic()
             if remaining <= 0:

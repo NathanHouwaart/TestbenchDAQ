@@ -1,8 +1,9 @@
 # Central storage and read-only data portal
 
 This deployment keeps instrument control on each acquisition machine. The
-server at `192.168.0.189` stores data and hosts a browser-only portal; it has
-no endpoint that can start, stop, or configure a Gator or enDAQ.
+server at `192.168.0.189` stores data, hosts a browser-only portal, and runs
+one background conversion worker. The portal has no endpoint that can start,
+stop, or configure a Gator or enDAQ.
 
 ## Install and update from GitHub
 
@@ -340,8 +341,10 @@ to use a suitable local high-speed buffer.
 ## Run the portal with Docker Compose
 
 Install Docker Engine and the Docker Compose plugin on the server. The portal
-reads `/srv/testbenchdaq` through a read-only container volume. NFS remains a
-host service; do not run the NFS server in this Compose project.
+API reads `/srv/testbenchdaq` through a read-only container volume. A separate
+single-worker `processor` container has write access only to create derived
+signal CSV files and update processing status. NFS remains a host service; do
+not run the NFS server in this Compose project.
 
 Create a password file outside Git:
 
@@ -362,9 +365,20 @@ It serves these LAN URLs after authentication:
 - `http://192.168.0.189/data/wentelteef/`
 - `http://192.168.0.189/data/knarskast/`
 
-The React frontend refreshes manifest status every five seconds. The API and
-containers expose only `GET` endpoints. Session files are served only after
+The React frontend refreshes manifest status every five seconds. It shows
+**Recording**, **Finalising raw data**, **Queued for processing**,
+**Processing**, and **Completed**. Files can be browsed or downloaded only
+after processing completes; interrupted sessions retain their raw files for
+engineering recovery. The API exposes only `GET` endpoints. Session files are served only after
 their paths have been checked to remain inside that machine's session folder.
+
+For NFS-backed sessions, the acquisition host closes Gator data and verifies
+the enDAQ IDE offload first, then writes `processing-request.json` into the
+session. The processor atomically claims that request and converts Gator and
+enDAQ raw data in one global queue. It retries a failed job after 1, 5, and 15
+minutes, then records **Processing failed** without deleting the raw data.
+Local-output sessions process on their acquisition host instead and remain
+blocked until conversion ends.
 
 Open a session to enter its file explorer. The left sidebar is a file tree;
 selecting a CSV opens its contents in the main area. CSVs are read in pages of

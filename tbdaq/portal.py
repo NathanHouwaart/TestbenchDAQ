@@ -45,7 +45,13 @@ class SessionIndex:
     def machine_summary(self, machine: str) -> dict[str, Any]:
         directory = self._machine_directory(machine)
         sessions = self.sessions(machine)
-        active = next((item for item in sessions if item["status"] == "running"), None)
+        active = next(
+            (item for item in sessions if item["status"] in {
+                "initializing", "preflight", "waiting", "starting", "measuring",
+                "stopping", "queued", "processing",
+            }),
+            None,
+        )
         return {
             "machine": machine,
             "session_count": len(sessions),
@@ -274,11 +280,14 @@ class SessionIndex:
 
     @staticmethod
     def _summary(manifest: dict[str, Any], directory_name: str, display_name: str | None = None) -> dict[str, Any]:
+        raw_status = manifest.get("status", "unknown")
+        phase = manifest.get("live_status", {}).get("phase")
+        status = phase if raw_status in {"running", "processing"} and phase else raw_status
         return {
             "session_id": manifest.get("session_id", directory_name),
             "name": manifest.get("name"),
             "display_name": display_name,
-            "status": manifest.get("status", "unknown"),
+            "status": status,
             "started_at_utc": manifest.get("started_at_utc"),
             "ended_at_utc": manifest.get("ended_at_utc"),
             "live_status": manifest.get("live_status"),
