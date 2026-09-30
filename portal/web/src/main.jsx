@@ -33,11 +33,19 @@ function fileTree(files) {
 }
 
 function FolderBranch({node, path, depth, expanded, setExpanded, activeFolder, selectFolder, selectedFile, choose}) {
-  const open = expanded.has(path.join("/"));
-  const toggle = () => setExpanded(previous => { const next=new Set(previous); const key=path.join("/"); next.has(key)?next.delete(key):next.add(key); return next; });
   const folders=[...node.folders.entries()].sort(([a],[b])=>a.localeCompare(b));
   const files=[...node.files].sort((a,b)=>a.path.localeCompare(b.path));
-  return <>{folders.map(([name,child]) => { const childPath=[...path,name]; return <div className="tree-branch" key={childPath.join("/")}><div className="tree-row" style={{paddingLeft:depth*14}}><button className="tree-toggle" onClick={toggle} aria-label={`${open?"Collapse":"Expand"} ${name}`}><ChevronRight className={open?"expanded":""} size={15}/></button><button className={`tree-folder ${activeFolder.join("/")===childPath.join("/")?"active":""}`} onClick={()=>selectFolder(childPath)} onDoubleClick={toggle} title="Double-click to expand or collapse">{open?<FolderOpen size={16}/>:<Folder size={16}/>}<span>{name}</span></button></div>{open&&<FolderBranch node={child} path={childPath} depth={depth+1} expanded={expanded} setExpanded={setExpanded} activeFolder={activeFolder} selectFolder={selectFolder} selectedFile={selectedFile} choose={choose}/>}</div>})}{files.map(item=><button className={`tree-file ${selectedFile?.path===item.path?"selected":""}`} style={{paddingLeft:depth*14+23}} key={item.path} onClick={()=>choose(item)}>{item.path.endsWith(".json")?<FileJson size={16}/>:<FileText size={16}/>}<span>{item.path.split("/").at(-1)}</span></button>)}</>;
+  return <>{folders.map(([name,child]) => {
+    const childPath=[...path,name];
+    const key=childPath.join("/");
+    const open=expanded.has(key);
+    const toggle=() => setExpanded(previous => {
+      const next=new Set(previous);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+    return <div className="tree-branch" key={key}><div className="tree-row" style={{paddingLeft:depth*14}}><button className="tree-toggle" onClick={toggle} aria-label={`${open?"Collapse":"Expand"} ${name}`}><ChevronRight className={open?"expanded":""} size={15}/></button><button className={`tree-folder ${activeFolder.join("/")===key?"active":""}`} onClick={()=>selectFolder(childPath)} onDoubleClick={toggle} title="Double-click to expand or collapse">{open?<FolderOpen size={16}/>:<Folder size={16}/>}<span>{name}</span></button></div>{open&&<FolderBranch node={child} path={childPath} depth={depth+1} expanded={expanded} setExpanded={setExpanded} activeFolder={activeFolder} selectFolder={selectFolder} selectedFile={selectedFile} choose={choose}/>}</div>;
+  })}{files.map(item=><button className={`tree-file ${selectedFile?.path===item.path?"selected":""}`} style={{paddingLeft:depth*14+23}} key={item.path} onClick={()=>choose(item)}>{item.path.endsWith(".json")?<FileJson size={16}/>:<FileText size={16}/>}<span>{item.path.split("/").at(-1)}</span></button>)}</>;
 }
 
 function MainBreadcrumbs({folder, file, selectFolder}) {
