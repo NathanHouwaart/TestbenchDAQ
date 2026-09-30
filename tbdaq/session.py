@@ -159,8 +159,7 @@ class Session:
                 or run_number <= self._config.run_count
             ):
                 if self._complete_requested:
-                    self._process_deferred_runs()
-                    return self._finish("success", "Completed by external controller.")
+                    return self._finish_external_completion()
                 if self._interrupt_requested:
                     self._process_deferred_runs()
                     return self._finish("interrupted", "Stop requested by controller.")
@@ -177,9 +176,9 @@ class Session:
                     recovery_not_before or planned_monotonic,
                 )
                 if not self._wait_until(start_not_before):
-                    self._process_deferred_runs()
                     if self._complete_requested:
-                        return self._finish("success", "Completed by external controller.")
+                        return self._finish_external_completion()
+                    self._process_deferred_runs()
                     return self._finish("interrupted", "Stop requested by controller.")
                 lateness = max(0.0, self._monotonic() - planned_monotonic)
                 schedule_warning = None
@@ -258,25 +257,12 @@ class Session:
                     # The external owner (GUI/service/CLI) completed the
                     # broader experiment. The just-finished window is kept
                     # and the session has a normal, not interrupted, outcome.
-                    self._process_deferred_runs()
-                    if self._server_processing:
-                        self._queue_server_processing()
-                        self._manifest["status"] = "processing"
-                        self._manifest["ended_at_utc"] = _iso_utc(self._clock())
-                        self._set_live_status("queued")
-                        write_processing_request(self._session_dir)
-                        return self._manifest
-                    return self._finish("success", "Completed by external controller.")
+                    return self._finish_external_completion()
                 run_number += 1
 
             self._process_deferred_runs()
             if self._server_processing:
-                self._queue_server_processing()
-                self._manifest["status"] = "processing"
-                self._manifest["ended_at_utc"] = _iso_utc(self._clock())
-                self._set_live_status("queued")
-                write_processing_request(self._session_dir)
-                return self._manifest
+                return self._publish_server_processing_request()
             statuses = [run["status"] for run in self._manifest["runs"]]
             status = "success" if statuses and all(item == "success" for item in statuses) else "partial"
             return self._finish(status)
@@ -545,6 +531,22 @@ class Session:
             "attempts": 0,
             "last_error": None,
         }
+
+    def _publish_server_processing_request(self) -> dict[str, Any]:
+        """Mark a retained session queued, then publish its durable request."""
+        self._queue_server_processing()
+        self._manifest["status"] = "processing"
+        self._manifest["ended_at_utc"] = _iso_utc(self._clock())
+        self._set_live_status("queued")
+        write_processing_request(self._session_dir)
+        return self._manifest
+
+    def _finish_external_completion(self) -> dict[str, Any]:
+        """Complete normally, publishing retained data when server processing is enabled."""
+        self._process_deferred_runs()
+        if self._server_processing and self._manifest["runs"]:
+            return self._publish_server_processing_request()
+        return self._finish("success", "Completed by external controller.")
 
     @staticmethod
     def _adapters_requiring_cleanup(

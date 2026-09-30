@@ -187,6 +187,32 @@ class SessionTests(unittest.TestCase):
         finally:
             session._remove_file_logging()
 
+    def test_external_completion_between_windows_publishes_server_request(self) -> None:
+        gator = FakeAdapter("gator")
+        config = SessionConfig(
+            mode="scheduled",
+            output_root=str(self.root),
+            run_count=2,
+            run_duration_s=1,
+            run_period_s=100,
+            gator=GatorConfig(enabled=True),
+        )
+        session = self._session(config, {"gator": gator}, session_id="between-windows")
+        session.enable_server_processing()
+        original_sleep = self.clock.sleep
+
+        def complete_while_waiting(duration: float) -> None:
+            original_sleep(duration)
+            if gator.stop_calls == 1:
+                session.request_complete()
+
+        session._sleep = complete_while_waiting
+        manifest = session.run()
+
+        self.assertEqual(manifest["status"], "processing")
+        self.assertEqual(manifest["live_status"]["phase"], "queued")
+        self.assertTrue((self.root / "between-windows" / "processing-request.json").is_file())
+
     def test_controller_stop_safely_stops_a_timed_run(self) -> None:
         gator = FakeAdapter("gator")
         config = SessionConfig(
