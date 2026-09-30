@@ -181,6 +181,7 @@ class LocalServiceController:
             return {
                 "state": "starting",
                 "session_id": request.session_id,
+                "session_root": str(session.session_dir),
                 "run_root": str(session.session_dir / "run_01"),
             }
 
