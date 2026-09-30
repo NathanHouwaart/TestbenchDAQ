@@ -38,6 +38,10 @@ class EndaqChannelConfig:
     sample_rate_min_hz: Optional[float] = None
     sample_rate_max_hz: Optional[float] = None
     supported_sample_rates_hz: list[float] = field(default_factory=list)
+    # Recorder-provided, human-readable detail for channels whose rate control
+    # belongs to a subchannel. This is retained in portable acquisition plans;
+    # only ``enabled`` and ``sample_rate_hz`` are applied to the recorder.
+    sample_rate_controls: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -224,7 +228,7 @@ _ENDAQ_KEYS = {
 }
 _ENDAQ_CHANNEL_KEYS = {
     "enabled", "sample_rate_hz", "name", "subchannels", "sample_rate_min_hz",
-    "sample_rate_max_hz", "supported_sample_rates_hz",
+    "sample_rate_max_hz", "supported_sample_rates_hz", "sample_rate_controls",
 }
 
 # Public, portable acquisition documents deliberately contain no paths,
