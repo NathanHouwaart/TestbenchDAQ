@@ -131,6 +131,31 @@ class LocalServiceController:
             "storage": _storage_dict(storage),
         }
 
+    def capabilities(self) -> dict[str, Any]:
+        """Return read-only recorder capabilities for an operator client.
+
+        This intentionally never calls ``discover()`` because discovery would
+        apply settings and synchronise the device clock.  It only describes a
+        mounted enDAQ, allowing TestDesigner to populate a selector safely.
+        """
+        acquisition = {
+            "schema": "testbenchdaq/acquisition/v1",
+            "name": "capability-query",
+            "schedule": {"window_duration_s": 1, "run_count": 1},
+            "gator": {"enabled": False},
+            "endaq": {"enabled": True, "channels": []},
+        }
+        try:
+            config = session_config_from_machine_and_acquisition(
+                load_machine_config(self._config_path), acquisition,
+                base_dir=self._config_path.parent,
+            )
+            from tbdaq.adapters.endaq import EndaqAdapter
+
+            return {"endaq": {"available": True, **EndaqAdapter(config.endaq).describe()}}
+        except (ConfigError, OSError, RuntimeError) as exc:
+            return {"endaq": {"available": False, "error": str(exc)}}
+
     def start(self, request: RunRequest) -> dict[str, Any]:
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
@@ -256,6 +281,10 @@ def create_app(machine_config_path: Path, *, allow_local_output: bool = False) -
     @app.get("/status")
     def status() -> dict[str, Any]:
         return controller.status()
+
+    @app.get("/capabilities")
+    def capabilities() -> dict[str, Any]:
+        return controller.capabilities()
 
     @app.post("/validate")
     def validate(body: RunRequestBody) -> dict[str, Any]:
