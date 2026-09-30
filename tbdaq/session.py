@@ -89,6 +89,10 @@ class Session:
                 "free_bytes_at_start": self._storage.free_bytes,
                 "total_bytes": self._storage.total_bytes,
             },
+            "portal_processing": {
+                "enabled": False,
+                "reason": "Not requested by the local service.",
+            },
             "live_status": {
                 "phase": "initializing",
                 "current_run": None,
@@ -763,7 +767,14 @@ class Session:
 
     def enable_server_processing(self) -> None:
         """Use the portal worker after raw data has safely reached NFS."""
+        if self._storage.mode != "nfs":
+            raise RuntimeError("Server-side processing requires NFS-backed output storage.")
         self._server_processing = True
+        self._manifest["portal_processing"] = {
+            "enabled": True,
+            "reason": "NFS-backed local service session.",
+        }
+        self._write_manifest()
 
     @property
     def session_dir(self) -> Path:

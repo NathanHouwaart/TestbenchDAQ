@@ -171,8 +171,19 @@ class LocalServiceController:
                 raise ServiceError(f"Could not create DAQ session: {exc}") from exc
             self._session = session
             storage = self._storage_from_machine_config(load_machine_config(self._config_path))
-            if storage.mode == "nfs" and hasattr(session, "enable_server_processing"):
-                session.enable_server_processing()
+            if storage.mode == "nfs":
+                enable_server_processing = getattr(session, "enable_server_processing", None)
+                if not callable(enable_server_processing):
+                    raise ServiceError(
+                        "NFS-backed acquisition requires a TestbenchDAQ session "
+                        "that supports portal processing. Update the local service."
+                    )
+                try:
+                    enable_server_processing()
+                except Exception as exc:
+                    raise ServiceError(
+                        f"Could not enable portal processing for this NFS session: {exc}"
+                    ) from exc
             self._request = request
             self._terminal_manifest = None
             self._error = None

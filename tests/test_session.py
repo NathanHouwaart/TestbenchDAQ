@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import threading
 import unittest
@@ -169,6 +170,22 @@ class SessionTests(unittest.TestCase):
         self.assertTrue((self.root / "success" / "session_manifest.json").is_file())
         self.assertEqual(manifest["live_status"]["phase"], "success")
         self.assertEqual(manifest["storage"]["mode"], "nfs")
+
+    def test_nfs_server_processing_is_recorded_before_run(self) -> None:
+        config = SessionConfig(
+            output_root=str(self.root), run_duration_s=1,
+            gator=GatorConfig(enabled=True),
+        )
+        session = self._session(config, {"gator": FakeAdapter("gator")}, session_id="portal")
+
+        session.enable_server_processing()
+
+        try:
+            manifest = json.loads((self.root / "portal" / "session_manifest.json").read_text())
+            self.assertTrue(manifest["portal_processing"]["enabled"])
+            self.assertTrue(session._server_processing)
+        finally:
+            session._remove_file_logging()
 
     def test_controller_stop_safely_stops_a_timed_run(self) -> None:
         gator = FakeAdapter("gator")
