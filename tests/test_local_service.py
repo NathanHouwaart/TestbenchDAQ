@@ -56,16 +56,15 @@ class LocalServiceTests(unittest.TestCase):
         self.root = Path(self.temp_dir.name)
         self.config_path = self.root / "machine.json"
         self.config_path.write_text(json.dumps({
+            "schema": "testbenchdaq/machine/v1",
             "output_root": str(self.root / "data"),
             "gator": {
-                "enabled": False,
                 "binary_path": "/protected/gator_recorder",
                 "device_index": 3,
                 "start_timeout_s": 30,
                 "stop_timeout_s": 10,
             },
             "endaq": {
-                "enabled": False,
                 "serial": "protected-serial",
                 "delete_after_verified_offload": False,
             },
@@ -77,15 +76,16 @@ class LocalServiceTests(unittest.TestCase):
     def _request(self):
         return RunRequest.from_mapping({
             "session_id": "bearing-baseline__2026-09-28T10-15-22Z-a3f8",
-            "experiment_name": "bearing-baseline",
-            "run_duration_s": 10,
-            "gator": {
-                "enabled": True,
-                "channel": 8,
-                "sample_rate_hz": 1000,
-                "full_scale": 8,
+            "acquisition": {
+                "schema": "testbenchdaq/acquisition/v1",
+                "name": "bearing-baseline",
+                "schedule": {"window_duration_s": 10, "run_count": 1},
+                "gator": {
+                    "enabled": True, "channel": 8,
+                    "sample_rate_hz": 1000, "full_scale": 8,
+                },
+                "endaq": {"enabled": False, "channels": []},
             },
-            "endaq": {"enabled": False},
         })
 
     def test_request_merges_only_operator_safe_settings(self):
@@ -106,9 +106,9 @@ class LocalServiceTests(unittest.TestCase):
 
     def test_unknown_protected_setting_is_rejected(self):
         request = self._request()
-        request.gator["binary_path"] = "/not/allowed"
+        request.acquisition["gator"]["binary_path"] = "/not/allowed"
 
-        with self.assertRaisesRegex(ServiceError, "Unknown Gator request"):
+        with self.assertRaisesRegex(ServiceError, "Unknown acquisition.gator"):
             merge_run_request(
                 json.loads(self.config_path.read_text(encoding="utf-8")),
                 request,

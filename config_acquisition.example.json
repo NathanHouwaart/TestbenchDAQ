@@ -1,0 +1,25 @@
+{
+  "_comment": "Portable experiment-level acquisition. Generate this from TestDesigner or a verified device profile; both source blocks are intentionally explicit.",
+  "schema": "testbenchdaq/acquisition/v1",
+  "name": "bearing-baseline",
+  "schedule": {
+    "start_delay_s": 0,
+    "window_duration_s": 30,
+    "run_count": 20,
+    "run_period_s": 60,
+    "missed_start_tolerance_s": 2,
+    "missed_start_policy": "abort",
+    "allow_partial": false
+  },
+  "gator": {
+    "enabled": true,
+    "channel": 8,
+    "sample_rate_hz": 1000,
+    "full_scale": 8,
+    "threshold": null
+  },
+  "endaq": {
+    "enabled": false,
+    "channels": []
+  }
+}

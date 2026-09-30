@@ -19,7 +19,11 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 
-from tbdaq.config import ConfigError, SessionConfig, session_config_from_mapping
+from tbdaq.config import (
+    ConfigError,
+    SessionConfig,
+    session_config_from_machine_and_acquisition,
+)
 from tbdaq.session import Session
 from tbdaq.storage import StorageError, StorageInfo, validate_output_storage
 
@@ -33,41 +37,24 @@ class RunRequest:
     """The small, safe subset of settings an operator client may submit."""
 
     session_id: str
-    experiment_name: str
-    mode: str
-    run_duration_s: float | None
-    gator: dict[str, Any]
-    endaq: dict[str, Any]
+    acquisition: dict[str, Any]
 
     @classmethod
     def from_mapping(cls, value: Mapping[str, Any]) -> "RunRequest":
-        allowed = {
-            "session_id", "experiment_name", "mode", "run_duration_s", "gator", "endaq",
-        }
+        allowed = {"session_id", "acquisition"}
         unknown = sorted(set(value) - allowed)
         if unknown:
             raise ServiceError(f"Unknown run request field(s): {', '.join(unknown)}.")
         try:
             session_id = str(value["session_id"]).strip()
-            experiment_name = str(value["experiment_name"]).strip()
+            acquisition = value["acquisition"]
         except KeyError as exc:
             raise ServiceError(f"Missing required run request field: {exc.args[0]}.") from exc
         if not session_id or any(char in session_id for char in "/\\"):
             raise ServiceError("session_id must be a non-empty directory name.")
-        if not experiment_name:
-            raise ServiceError("experiment_name cannot be empty.")
-        mode = str(value.get("mode", "diagnostic")).strip().lower()
-        duration = value.get("run_duration_s")
-        if duration is not None:
-            try:
-                duration = float(duration)
-            except (TypeError, ValueError) as exc:
-                raise ServiceError("run_duration_s must be numeric or null.") from exc
-        gator = value.get("gator", {})
-        endaq = value.get("endaq", {})
-        if not isinstance(gator, dict) or not isinstance(endaq, dict):
-            raise ServiceError("gator and endaq must be JSON objects.")
-        return cls(session_id, experiment_name, mode, duration, dict(gator), dict(endaq))
+        if not isinstance(acquisition, Mapping):
+            raise ServiceError("acquisition must be a JSON object.")
+        return cls(session_id, dict(acquisition))
 
 
 def load_machine_config(path: Path) -> dict[str, Any]:
@@ -84,58 +71,13 @@ def load_machine_config(path: Path) -> dict[str, Any]:
 
 
 def merge_run_request(machine_config: Mapping[str, Any], request: RunRequest, *, base_dir: Path) -> SessionConfig:
-    """Merge an operator request into protected local configuration.
-
-    Only sensor selection and acquisition settings are overlaid. All storage,
-    device identity, vendor-path, timeout, and retention configuration stays
-    local and cannot be changed through the API.
-    """
-    values = copy.deepcopy(dict(machine_config))
-    gator = values.setdefault("gator", {})
-    endaq = values.setdefault("endaq", {})
-    if not isinstance(gator, dict) or not isinstance(endaq, dict):
-        raise ServiceError("Protected gator and endaq configuration must be objects.")
-
-    values["name"] = request.experiment_name
-    values["mode"] = request.mode
-    values["run_count"] = 1
-    values["run_duration_s"] = request.run_duration_s
-    values["run_period_s"] = None
-    values["allow_partial"] = False
-
-    _apply_gator_request(gator, request.gator)
-    _apply_endaq_request(endaq, request.endaq)
+    """Resolve the portable request against protected machine configuration."""
     try:
-        return session_config_from_mapping(values, base_dir=base_dir)
+        return session_config_from_machine_and_acquisition(
+            machine_config, request.acquisition, base_dir=base_dir,
+        )
     except ConfigError as exc:
         raise ServiceError(str(exc)) from exc
-
-
-def _apply_gator_request(target: dict[str, Any], request: Mapping[str, Any]) -> None:
-    allowed = {"enabled", "channel", "sample_rate_hz", "full_scale"}
-    unknown = sorted(set(request) - allowed)
-    if unknown:
-        raise ServiceError(f"Unknown Gator request field(s): {', '.join(unknown)}.")
-    target["enabled"] = bool(request.get("enabled", False))
-    if "channel" in request:
-        target["channel"] = request["channel"]
-    if "sample_rate_hz" in request:
-        target["samplerate"] = request["sample_rate_hz"]
-    if "full_scale" in request:
-        target["fullscale"] = request["full_scale"]
-
-
-def _apply_endaq_request(target: dict[str, Any], request: Mapping[str, Any]) -> None:
-    allowed = {"enabled", "channels"}
-    unknown = sorted(set(request) - allowed)
-    if unknown:
-        raise ServiceError(f"Unknown enDAQ request field(s): {', '.join(unknown)}.")
-    target["enabled"] = bool(request.get("enabled", False))
-    if "channels" in request:
-        channels = request["channels"]
-        if not isinstance(channels, Mapping):
-            raise ServiceError("endaq.channels must be an object keyed by channel ID.")
-        target["channels"] = copy.deepcopy(dict(channels))
 
 
 class LocalServiceController:
@@ -299,11 +241,7 @@ class LocalServiceController:
 
 class RunRequestBody(BaseModel):
     session_id: str
-    experiment_name: str
-    mode: str = "diagnostic"
-    run_duration_s: float | None = None
-    gator: dict[str, Any] = {}
-    endaq: dict[str, Any] = {}
+    acquisition: dict[str, Any]
 
 
 def create_app(machine_config_path: Path, *, allow_local_output: bool = False) -> FastAPI:
@@ -369,6 +307,8 @@ def _active_state(manifest: Mapping[str, Any]) -> str:
     phase = str(manifest.get("live_status", {}).get("phase", "starting"))
     if phase == "measuring":
         return "recording"
+    if phase == "waiting":
+        return "armed"
     if phase in {"stopping", "processing"}:
         return "finalising"
     if phase == "queued":

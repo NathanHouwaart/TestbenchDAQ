@@ -11,7 +11,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-from tbdaq.config import ConfigError, SessionConfig, session_config_from_mapping
+from tbdaq.config import (
+    ConfigError,
+    SessionConfig,
+    session_config_from_machine_and_acquisition,
+    session_config_from_mapping,
+)
 
 
 _ANSI_RED = "\033[31m"
@@ -111,6 +116,18 @@ def _set_if_not_none(target: dict[str, Any], key: str, value: Any) -> None:
 
 
 def _build_config(args: argparse.Namespace) -> SessionConfig:
+    machine_path = Path(args.machine).expanduser().resolve() if args.machine else None
+    acquisition_path = (
+        Path(args.acquisition).expanduser().resolve() if args.acquisition else None
+    )
+    if machine_path or acquisition_path:
+        if args.config:
+            raise ConfigError("Use either --config or --machine with --acquisition, not both.")
+        if machine_path is None or acquisition_path is None:
+            raise ConfigError("--machine and --acquisition must be provided together.")
+        return session_config_from_machine_and_acquisition(
+            _load_json(machine_path), _load_json(acquisition_path), base_dir=machine_path.parent,
+        )
     config_path = Path(args.config).expanduser().resolve() if args.config else None
     values: dict[str, Any] = _load_json(config_path) if config_path else {}
     values = deepcopy(values)
@@ -183,7 +200,9 @@ def _make_parser() -> argparse.ArgumentParser:
         default="run",
         help="Run, show resolved config, inspect enDAQ, or stop/remount an enDAQ",
     )
-    parser.add_argument("--config", metavar="PATH", help="JSON configuration file")
+    parser.add_argument("--config", metavar="PATH", help="Legacy combined JSON configuration file")
+    parser.add_argument("--machine", metavar="PATH", help="Protected machine JSON configuration")
+    parser.add_argument("--acquisition", metavar="PATH", help="Portable acquisition JSON configuration")
     parser.add_argument("--name", metavar="NAME", help="Human-readable session name prefix")
     parser.add_argument("--machine-name", metavar="NAME", help="Machine identity stored in the manifest")
     parser.add_argument("--mode", choices=("diagnostic", "prognostic"))

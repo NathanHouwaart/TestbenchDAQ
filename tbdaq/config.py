@@ -63,10 +63,11 @@ class SessionConfig:
     machine_name: Optional[str] = None
     mode: str = "diagnostic"
     output_root: str = "./csv-output"
-    # None means a prognostic session continues until the operator interrupts it.
+    # None means the session continues until an external controller completes it.
     run_count: Optional[int] = 1
     run_duration_s: Optional[float] = None
     run_period_s: Optional[float] = None
+    start_delay_s: float = 0.0
     missed_start_tolerance_s: float = 2.0
     missed_start_policy: str = "abort"
     allow_partial: bool = False
@@ -96,8 +97,8 @@ class SessionConfig:
             self.machine_name = self.machine_name.strip().lower()
             if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", self.machine_name):
                 raise ConfigError("machine_name must be a hostname-style value of up to 63 characters.")
-        if self.mode not in {"diagnostic", "prognostic"}:
-            raise ConfigError("mode must be 'diagnostic' or 'prognostic'.")
+        if self.mode not in {"diagnostic", "prognostic", "scheduled"}:
+            raise ConfigError("mode must be 'diagnostic', 'prognostic', or 'scheduled'.")
         if not self.output_root.strip():
             raise ConfigError("output_root must not be empty.")
         if self.run_count is not None and (
@@ -110,6 +111,8 @@ class SessionConfig:
             raise ConfigError("run_duration_s must be > 0 when provided.")
         if self.run_period_s is not None and self.run_period_s <= 0:
             raise ConfigError("run_period_s must be > 0 when provided.")
+        if self.start_delay_s < 0:
+            raise ConfigError("start_delay_s must be >= 0.")
         if self.missed_start_tolerance_s < 0:
             raise ConfigError("missed_start_tolerance_s must be >= 0.")
         if self.missed_start_policy not in {"abort", "start_late"}:
@@ -117,7 +120,16 @@ class SessionConfig:
         if not self.enabled_families():
             raise ConfigError("Enable at least one sensor family.")
 
-        if self.mode == "diagnostic":
+        if self.mode == "scheduled":
+            if self.run_duration_s is None:
+                raise ConfigError("run_duration_s is required for a scheduled acquisition.")
+            if self.run_count is None and self.run_period_s is None:
+                raise ConfigError("run_period_s is required when run_count is null.")
+            if self.run_count is not None and self.run_count > 1 and self.run_period_s is None:
+                raise ConfigError("run_period_s is required when run_count is greater than one.")
+            if self.run_period_s is not None and self.run_period_s < self.run_duration_s:
+                raise ConfigError("run_period_s must be >= run_duration_s.")
+        elif self.mode == "diagnostic":
             if self.run_count != 1:
                 raise ConfigError("diagnostic mode supports exactly one run.")
         else:
@@ -198,7 +210,7 @@ class SessionConfig:
 
 _SESSION_KEYS = {
     "name", "machine_name", "mode", "output_root", "run_count", "run_duration_s", "run_period_s",
-    "missed_start_tolerance_s", "missed_start_policy", "allow_partial", "gator", "endaq",
+    "start_delay_s", "missed_start_tolerance_s", "missed_start_policy", "allow_partial", "gator", "endaq",
 }
 _GATOR_KEYS = {
     "enabled", "binary_path", "library_path", "device_index", "channel",
@@ -214,6 +226,28 @@ _ENDAQ_CHANNEL_KEYS = {
     "enabled", "sample_rate_hz", "name", "subchannels", "sample_rate_min_hz",
     "sample_rate_max_hz", "supported_sample_rates_hz",
 }
+
+# Public, portable acquisition documents deliberately contain no paths,
+# storage locations, device serial numbers, or retention policy. Those remain
+# in the local machine document.
+MACHINE_SCHEMA = "testbenchdaq/machine/v1"
+ACQUISITION_SCHEMA = "testbenchdaq/acquisition/v1"
+_MACHINE_KEYS = {"schema", "machine_name", "output_root", "gator", "endaq"}
+_MACHINE_GATOR_KEYS = {
+    "binary_path", "library_path", "device_index", "start_timeout_s", "stop_timeout_s",
+}
+_MACHINE_ENDAQ_KEYS = {
+    "serial", "model", "mount_path", "ide_converter_path", "command_timeout_s",
+    "remount_timeout_s", "minimum_free_space_bytes", "estimated_bytes_per_second",
+    "recording_time_limit_s", "recording_size_limit_bytes", "delete_after_verified_offload",
+}
+_ACQUISITION_KEYS = {"schema", "name", "schedule", "gator", "endaq"}
+_SCHEDULE_KEYS = {
+    "start_delay_s", "window_duration_s", "run_count", "run_period_s",
+    "missed_start_tolerance_s", "missed_start_policy", "allow_partial",
+}
+_ACQUISITION_GATOR_KEYS = {"enabled", "channel", "sample_rate_hz", "full_scale", "threshold"}
+_ACQUISITION_ENDAQ_KEYS = {"enabled", "channels"}
 
 
 def _without_comments(values: Mapping[str, Any]) -> dict[str, Any]:
@@ -233,6 +267,83 @@ def _section(values: Mapping[str, Any], key: str) -> dict[str, Any]:
     if not isinstance(raw, Mapping):
         raise ConfigError(f"{key} must be a JSON object.")
     return _without_comments(raw)
+
+
+def session_config_from_machine_and_acquisition(
+    machine: Mapping[str, Any],
+    acquisition: Mapping[str, Any],
+    *,
+    base_dir: Path,
+) -> SessionConfig:
+    """Resolve a portable acquisition against protected machine settings.
+
+    This is the only place where the two JSON document types meet.  Keeping
+    the merge here prevents a service client or portable file from changing
+    output storage, recorder locations, identity, or retention policy.
+    """
+    machine_values = _without_comments(machine)
+    acquisition_values = _without_comments(acquisition)
+    _reject_unknown(machine_values, _MACHINE_KEYS, "machine")
+    _reject_unknown(acquisition_values, _ACQUISITION_KEYS, "acquisition")
+    if machine_values.get("schema") != MACHINE_SCHEMA:
+        raise ConfigError(f"machine.schema must be '{MACHINE_SCHEMA}'.")
+    if acquisition_values.get("schema") != ACQUISITION_SCHEMA:
+        raise ConfigError(f"acquisition.schema must be '{ACQUISITION_SCHEMA}'.")
+
+    machine_gator = _section(machine_values, "gator")
+    machine_endaq = _section(machine_values, "endaq")
+    acquisition_gator = _section(acquisition_values, "gator")
+    acquisition_endaq = _section(acquisition_values, "endaq")
+    schedule = _section(acquisition_values, "schedule")
+    _reject_unknown(machine_gator, _MACHINE_GATOR_KEYS, "machine.gator")
+    _reject_unknown(machine_endaq, _MACHINE_ENDAQ_KEYS, "machine.endaq")
+    _reject_unknown(acquisition_gator, _ACQUISITION_GATOR_KEYS, "acquisition.gator")
+    _reject_unknown(acquisition_endaq, _ACQUISITION_ENDAQ_KEYS, "acquisition.endaq")
+    _reject_unknown(schedule, _SCHEDULE_KEYS, "acquisition.schedule")
+    if not isinstance(acquisition_values.get("name"), str) or not acquisition_values["name"].strip():
+        raise ConfigError("acquisition.name must be a non-empty string.")
+    for source, values in (("gator", acquisition_gator), ("endaq", acquisition_endaq)):
+        if "enabled" not in values or not isinstance(values["enabled"], bool):
+            raise ConfigError(f"acquisition.{source}.enabled must be true or false.")
+    if "window_duration_s" not in schedule:
+        raise ConfigError("acquisition.schedule.window_duration_s is required.")
+    if "run_count" not in schedule:
+        raise ConfigError("acquisition.schedule.run_count is required (use null for external completion).")
+
+    gator: dict[str, Any] = dict(machine_gator)
+    gator["enabled"] = acquisition_gator["enabled"]
+    for source_key, target_key in (
+        ("channel", "channel"),
+        ("sample_rate_hz", "samplerate"),
+        ("full_scale", "fullscale"),
+        ("threshold", "threshold"),
+    ):
+        if source_key in acquisition_gator:
+            gator[target_key] = acquisition_gator[source_key]
+
+    endaq: dict[str, Any] = dict(machine_endaq)
+    endaq["enabled"] = acquisition_endaq["enabled"]
+    if "channels" in acquisition_endaq:
+        endaq["channels"] = acquisition_endaq["channels"]
+
+    values: dict[str, Any] = {
+        "name": acquisition_values["name"],
+        "machine_name": machine_values.get("machine_name"),
+        "mode": "scheduled",
+        "output_root": machine_values.get("output_root"),
+        "run_duration_s": schedule["window_duration_s"],
+        "run_count": schedule["run_count"],
+        "run_period_s": schedule.get("run_period_s"),
+        "start_delay_s": schedule.get("start_delay_s", 0.0),
+        "missed_start_tolerance_s": schedule.get("missed_start_tolerance_s", 2.0),
+        "missed_start_policy": schedule.get("missed_start_policy", "abort"),
+        "allow_partial": schedule.get("allow_partial", False),
+        "gator": gator,
+        "endaq": endaq,
+    }
+    if not isinstance(values["output_root"], str) or not values["output_root"].strip():
+        raise ConfigError("machine.output_root must be a non-empty string.")
+    return session_config_from_mapping(values, base_dir=base_dir)
 
 
 def session_config_from_mapping(

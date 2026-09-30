@@ -137,14 +137,19 @@ class Session:
 
             self._manifest["status"] = "running"
             self._set_live_status("waiting")
-            base_wall = self._clock()
-            base_monotonic = self._monotonic()
+            # A delayed first window arms the service immediately but leaves
+            # the PLC free to begin its broader experiment before recording.
+            base_wall = self._clock() + self._config.start_delay_s
+            base_monotonic = self._monotonic() + self._config.start_delay_s
 
             run_number = 1
             while (
                 self._config.run_count is None
                 or run_number <= self._config.run_count
             ):
+                if self._complete_requested:
+                    self._process_deferred_runs()
+                    return self._finish("success", "Completed by external controller.")
                 if self._interrupt_requested:
                     self._process_deferred_runs()
                     return self._finish("interrupted", "Stop requested by controller.")
@@ -153,6 +158,8 @@ class Session:
                 planned_wall = base_wall + ((run_number - 1) * period)
                 if not self._wait_until(planned_monotonic):
                     self._process_deferred_runs()
+                    if self._complete_requested:
+                        return self._finish("success", "Completed by external controller.")
                     return self._finish("interrupted", "Stop requested by controller.")
                 lateness = max(0.0, self._monotonic() - planned_monotonic)
                 schedule_warning = None
@@ -164,7 +171,7 @@ class Session:
                     )
                     if self._config.missed_start_policy == "abort":
                         abort_message = (
-                            "PROGNOSTIC SCHEDULE VIOLATION - ABORTING SESSION: "
+                            "SCHEDULE VIOLATION - ABORTING SESSION: "
                             f"{reason} Increase run_period_s to leave enough time for "
                             "acquisition cleanup, required recorder offload, and storage writes, or explicitly set "
                             "missed_start_policy to 'start_late'."
@@ -203,7 +210,7 @@ class Session:
 
                 if run_record["status"] in {"failed", "interrupted"}:
                     terminal = "interrupted" if run_record["status"] == "interrupted" else "failed"
-                    # Prognostic signal export is deferred so it cannot delay
+                    # Signal export is deferred so it cannot delay
                     # the next planned acquisition. A terminal run has no next
                     # start to protect, so export every safely retained raw
                     # acquisition before returning.
@@ -218,6 +225,19 @@ class Session:
                         "failed",
                         f"{run_record['run_id']} was partial while allow_partial is false.",
                     )
+                if self._complete_requested:
+                    # The external owner (GUI/service/CLI) completed the
+                    # broader experiment. The just-finished window is kept
+                    # and the session has a normal, not interrupted, outcome.
+                    self._process_deferred_runs()
+                    if self._server_processing:
+                        self._queue_server_processing()
+                        self._manifest["status"] = "processing"
+                        self._manifest["ended_at_utc"] = _iso_utc(self._clock())
+                        self._set_live_status("queued")
+                        write_processing_request(self._session_dir)
+                        return self._manifest
+                    return self._finish("success", "Completed by external controller.")
                 run_number += 1
 
             self._process_deferred_runs()
