@@ -62,6 +62,7 @@ class FakeAdapter:
         self.export_delay_s = export_delay_s
         self.clock = clock
         self.start_calls = 0
+        self.start_times: list[float] = []
         self.stop_calls = 0
         self.result = FakeResult()
 
@@ -75,6 +76,8 @@ class FakeAdapter:
     def start_run(self, run_dir: Path) -> FakeResult:
         del run_dir
         self.start_calls += 1
+        if self.clock:
+            self.start_times.append(self.clock.monotonic())
         self.result = FakeResult(error=self.start_error)
         return self.result
 
@@ -293,7 +296,7 @@ class SessionTests(unittest.TestCase):
             " ".join(manifest["runs"][0]["errors"]),
         )
 
-    def test_prognostic_schedule_aborts_after_missed_start(self) -> None:
+    def test_recovery_guard_delays_next_start_after_stop_command(self) -> None:
         gator = FakeAdapter("gator")
         normal_stop = gator.stop_run
 
@@ -317,10 +320,13 @@ class SessionTests(unittest.TestCase):
             {"gator": gator},
             session_id="missed-start",
         ).run()
-        self.assertEqual(manifest["status"], "aborted")
-        self.assertEqual(manifest["runs"][1]["status"], "aborted")
-        self.assertIn("missed its planned start", manifest["abort_reason"])
-        self.assertIn("ABORTING SESSION", manifest["abort_reason"])
+        self.assertEqual(manifest["status"], "success")
+        self.assertEqual(manifest["runs"][1]["status"], "success")
+        self.assertIn("Recorder recovery guard delayed", manifest["runs"][1]["warnings"][0])
+        self.assertEqual(
+            manifest["runs"][0]["measurement_window"]["minimum_recovery_before_next_start_s"],
+            45.0,
+        )
 
     def test_start_late_policy_continues_after_cleanup_overrun(self) -> None:
         gator = FakeAdapter("gator")
@@ -346,7 +352,7 @@ class SessionTests(unittest.TestCase):
         ).run()
         self.assertEqual(manifest["status"], "success")
         self.assertEqual(manifest["runs"][1]["status"], "success")
-        self.assertIn("Starting late by policy", manifest["runs"][1]["warnings"][0])
+        self.assertIn("Recorder recovery guard delayed", manifest["runs"][1]["warnings"][0])
 
     def test_prognostic_endaq_processing_is_deferred_until_after_runs(self) -> None:
         endaq = FakeAdapter(

@@ -19,6 +19,12 @@ from tbdaq.storage import StorageInfo, validate_output_storage
 
 _LOG = logging.getLogger(__name__)
 
+# A recorder that has just received its stop command may still be remounting,
+# copying its raw file, or verifying the offload. Never issue another start
+# command during this protected interval. This is an engineering policy, not
+# an operator-tuned acquisition setting.
+MINIMUM_RECORDER_RECOVERY_S = 45.0
+
 
 class Session:
     """Run one validated diagnostic or prognostic acquisition session.
@@ -49,6 +55,7 @@ class Session:
         self._interrupt_requested = False
         self._complete_requested = False
         self._server_processing = False
+        self._recovery_not_before_monotonic: float | None = None
         self._storage = storage_validator(
             Path(config.output_root), allow_local_output=allow_local_output
         )
@@ -156,7 +163,16 @@ class Session:
                 period = self._config.run_period_s or 0.0
                 planned_monotonic = base_monotonic + ((run_number - 1) * period)
                 planned_wall = base_wall + ((run_number - 1) * period)
-                if not self._wait_until(planned_monotonic):
+                recovery_not_before = self._recovery_not_before_monotonic
+                recovery_guard_applied = (
+                    recovery_not_before is not None
+                    and recovery_not_before > planned_monotonic
+                )
+                start_not_before = max(
+                    planned_monotonic,
+                    recovery_not_before or planned_monotonic,
+                )
+                if not self._wait_until(start_not_before):
                     self._process_deferred_runs()
                     if self._complete_requested:
                         return self._finish("success", "Completed by external controller.")
@@ -164,32 +180,41 @@ class Session:
                 lateness = max(0.0, self._monotonic() - planned_monotonic)
                 schedule_warning = None
                 if lateness > self._config.missed_start_tolerance_s:
-                    reason = (
-                        f"run_{run_number:02d} missed its planned start by "
-                        f"{lateness:.3f}s (tolerance "
-                        f"{self._config.missed_start_tolerance_s:.3f}s)."
-                    )
-                    if self._config.missed_start_policy == "abort":
-                        abort_message = (
-                            "SCHEDULE VIOLATION - ABORTING SESSION: "
-                            f"{reason} Increase run_period_s to leave enough time for "
-                            "acquisition cleanup, required recorder offload, and storage writes, or explicitly set "
-                            "missed_start_policy to 'start_late'."
+                    if recovery_guard_applied:
+                        schedule_warning = (
+                            "Recorder recovery guard delayed this start by "
+                            f"{lateness:.3f}s to keep at least "
+                            f"{MINIMUM_RECORDER_RECOVERY_S:g}s between the previous "
+                            "stop command and this start command."
                         )
-                        _LOG.error(abort_message)
-                        self._manifest["runs"].append(
-                            {
-                                "run_id": f"run_{run_number:02d}",
-                                "run_number": run_number,
-                                "status": "aborted",
-                                "planned_start_utc": _iso_utc(planned_wall),
-                                "lateness_s": round(lateness, 6),
-                                "errors": [abort_message],
-                            }
+                        _LOG.info(schedule_warning)
+                    else:
+                        reason = (
+                            f"run_{run_number:02d} missed its planned start by "
+                            f"{lateness:.3f}s (tolerance "
+                            f"{self._config.missed_start_tolerance_s:.3f}s)."
                         )
-                        return self._finish("aborted", abort_message)
-                    schedule_warning = reason + " Starting late by policy."
-                    _LOG.warning(schedule_warning)
+                        if self._config.missed_start_policy == "abort":
+                            abort_message = (
+                                "SCHEDULE VIOLATION - ABORTING SESSION: "
+                                f"{reason} Increase run_period_s to leave enough time for "
+                                "acquisition cleanup, required recorder offload, and storage writes, or explicitly set "
+                                "missed_start_policy to 'start_late'."
+                            )
+                            _LOG.error(abort_message)
+                            self._manifest["runs"].append(
+                                {
+                                    "run_id": f"run_{run_number:02d}",
+                                    "run_number": run_number,
+                                    "status": "aborted",
+                                    "planned_start_utc": _iso_utc(planned_wall),
+                                    "lateness_s": round(lateness, 6),
+                                    "errors": [abort_message],
+                                }
+                            )
+                            return self._finish("aborted", abort_message)
+                        schedule_warning = reason + " Starting late by policy."
+                        _LOG.warning(schedule_warning)
 
                 run_record = self._execute_run(
                     run_number=run_number,
@@ -401,7 +426,14 @@ class Session:
         finally:
             self._set_live_status("stopping", run_number)
             stop_request_wall = self._clock()
+            stop_request_monotonic = self._monotonic()
+            self._recovery_not_before_monotonic = (
+                stop_request_monotonic + MINIMUM_RECORDER_RECOVERY_S
+            )
             record["measurement_window"]["stop_requested_utc"] = _iso_utc(stop_request_wall)
+            record["measurement_window"]["minimum_recovery_before_next_start_s"] = (
+                MINIMUM_RECORDER_RECOVERY_S
+            )
             record["measurement_window"]["actual_duration_s"] = round(
                 self._monotonic() - measurement_start_monotonic,
                 6,
