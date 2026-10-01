@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from tbdaq.__main__ import _ConsoleFormatter, _build_config, _make_parser, _manifest_messages
 
@@ -32,15 +35,37 @@ class CliTests(unittest.TestCase):
         self.assertTrue(formatter.format(warning).startswith("\033[33m"))
         self.assertTrue(formatter.format(error).startswith("\033[31m"))
 
-    def test_run_until_stopped_sets_an_unlimited_count(self) -> None:
-        args = _make_parser().parse_args([
-            "--mode", "prognostic", "--run-until-stopped",
-            "--run-duration-s", "1", "--run-period-s", "2", "--gator",
-        ])
-        self.assertIsNone(_build_config(args).run_count)
+    def test_machine_and_acquisition_are_required_together(self) -> None:
+        args = _make_parser().parse_args(["--machine", "machine.json"])
+        with self.assertRaisesRegex(Exception, "provided together"):
+            _build_config(args)
+
+    def test_machine_and_acquisition_build_a_session_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "machine.json").write_text(json.dumps({
+                "schema": "testbenchdaq/machine/v1",
+                "machine_name": "bench",
+                "output_root": "/tmp/results",
+            }), encoding="utf-8")
+            (root / "acquisition.json").write_text(json.dumps({
+                "schema": "testbenchdaq/acquisition/v1",
+                "name": "test",
+                "schedule": {"window_duration_s": 1, "run_count": 1},
+                "gator": {"enabled": True, "channel": 1, "sample_rate_hz": 1000},
+                "endaq": {"enabled": False, "channels": []},
+            }), encoding="utf-8")
+            args = _make_parser().parse_args([
+                "--machine", str(root / "machine.json"),
+                "--acquisition", str(root / "acquisition.json"),
+            ])
+            config = _build_config(args)
+        self.assertEqual(config.machine_name, "bench")
+        self.assertEqual(config.run_duration_s, 1)
+        self.assertTrue(config.gator.enabled)
 
     def test_local_output_override_is_explicit(self) -> None:
-        args = _make_parser().parse_args(["--allow-local-output", "--gator"])
+        args = _make_parser().parse_args(["--allow-local-output"])
         self.assertTrue(args.allow_local_output)
 
 

@@ -44,7 +44,7 @@ flowchart LR
     Wizard --> Dataset
 ```
 
-Recordings can be stored locally or on an external NTFS server. Storing them
+Recordings can be stored locally or on an external NFS server. Storing them
 on the server prevents the acquisition computer's internal disk from filling
 up. The server portal lets you remotely view and download recordings.
 

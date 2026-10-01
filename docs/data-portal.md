@@ -56,8 +56,8 @@ outside containers, so updating application code never replaces acquired data.
 
 ### Acquisition machines (`wentelteef` and `knarskast`)
 
-Clone the same repository on each acquisition machine, but keep its
-machine-specific `config.json` local and untracked:
+Clone the same repository on each acquisition machine. Keep its local
+`machine.json` untracked; acquisition files are portable experiment records:
 
 ```bash
 git clone https://github.com/NathanHouwaart/TestbenchDAQ.git ~/TestbenchDAQ
@@ -66,10 +66,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
-cp config_example.json config.json
+cp machine.example.json machine.json
+cp acquisition.example.json acquisition.json
 ```
 
-Edit `config.json` for that machine. On `wentelteef`, at minimum set:
+Edit `machine.json` for that machine. On `wentelteef`, at minimum set:
 
 ```json
 {
@@ -90,10 +91,9 @@ python -m pip install -e .
 cmake --build gator_recorder/build
 ```
 
-If a future update changes `config_example.json`, compare it with the local
-`config.json` and manually add only the new settings. Never overwrite the
-local file wholesale because it contains hardware identity and calibration
-choices.
+Never overwrite local `machine.json` wholesale because it contains hardware
+identity and installation choices. Start each new measurement from a copy of
+`acquisition.example.json` or a GUI-generated acquisition file.
 
 ## NFS storage
 
@@ -208,7 +208,7 @@ Its `/etc/fstab` line is:
 
 ### Configure TestbenchDAQ
 
-Each machine uses a matching configuration:
+Each machine uses a matching `machine.json`:
 
 ```json
 {
@@ -223,7 +223,7 @@ For the acquisition-host setup and a first measurement, see the
 Before hardware is commanded, TestbenchDAQ verifies that `output_root` is
 writable NFS/NFSv4 storage. For a deliberately local run, an operator may use
 `--allow-local-output`; the manifest prominently records that override. The
-option is never persisted in `config.json`.
+option is never persisted in either configuration file.
 
 ### Troubleshooting: `access denied by server while mounting`
 

@@ -1,37 +1,31 @@
 {
-  "_comment": "Copy to config.json. Enable at least one sensor before running.",
-  "name": null,
-  "machine_name": "wentelteef",
-  "mode": "diagnostic",
-  "output_root": "/mnt/testbench-results",
-  "run_count": 1,
-  "_run_count_comment": "For unlimited prognostic acquisition, set run_count to null (or use --run-until-stopped).",
-  "run_duration_s": 30,
-  "run_period_s": null,
-  "missed_start_tolerance_s": 2.0,
-  "missed_start_policy": "abort",
-  "allow_partial": false,
+  "_comment": "Copy to acquisition.json. This portable experiment file contains every acquisition choice; select at least one source before running.",
+  "schema": "testbenchdaq/acquisition/v1",
+  "name": "bearing-baseline",
+  "schedule": {
+    "start_delay_s": 0,
+    "window_duration_s": 30,
+    "run_count": 20,
+    "run_period_s": 60,
+    "missed_start_tolerance_s": 2,
+    "missed_start_policy": "abort",
+    "allow_partial": false
+  },
   "gator": {
-    "enabled": false,
-    "_installation_comment": "After scripts/install/install_gator.sh, use these system defaults.",
-    "binary_path": "/usr/local/bin/gator_recorder",
-    "library_path": "",
-    "device_index": null,
+    "enabled": true,
     "channel": 8,
-    "samplerate": 1000,
-    "fullscale": null,
-    "threshold": null,
-    "start_timeout_s": 30,
-    "stop_timeout_s": 10
+    "sample_rate_hz": 1000,
+    "full_scale": 8,
+    "threshold": null
   },
   "endaq": {
     "enabled": false,
-    "_channels_comment": "Verified S3-E100D40 profile for recorder S0016418. Name, subchannels, and rate limits are informational; only enabled and sample_rate_hz are enforced.",
+    "_channels_comment": "Verified S3-E100D40 profile for recorder S0016418. Name, subchannels, and rate limits are informational; enabled and sample_rate_hz are enforced.",
     "channels": [
       {
         "name": "100g PE Acceleration",
         "id": 8,
-        "enabled": true,
+        "enabled": false,
         "sample_rate_hz": 20000,
         "sample_rate_min_hz": 10,
         "sample_rate_max_hz": 20000,
@@ -40,7 +34,7 @@
       {
         "name": "Internal Pressure/Temperature/Humidity",
         "id": 20,
-        "enabled": null,
+        "enabled": false,
         "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
         "sample_rate_hz": null,
         "subchannels": 3
@@ -48,7 +42,7 @@
       {
         "name": "IMU Rotation",
         "id": 47,
-        "enabled": null,
+        "enabled": false,
         "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
         "sample_rate_hz": null,
         "subchannels": 3
@@ -56,7 +50,7 @@
       {
         "name": "Control Pad Pressure/Temperature/Humidity",
         "id": 59,
-        "enabled": true,
+        "enabled": false,
         "sample_rate_hz": 10,
         "sample_rate_min_hz": 1,
         "sample_rate_max_hz": 10,
@@ -65,7 +59,7 @@
       {
         "name": "Absolute Orientation",
         "id": 65,
-        "enabled": null,
+        "enabled": false,
         "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
         "sample_rate_hz": null,
         "subchannels": 5
@@ -73,7 +67,7 @@
       {
         "name": "Relative Orientation",
         "id": 70,
-        "enabled": null,
+        "enabled": false,
         "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
         "sample_rate_hz": null,
         "subchannels": 4
@@ -81,7 +75,7 @@
       {
         "name": "Light Sensor",
         "id": 76,
-        "enabled": true,
+        "enabled": false,
         "_sample_rate_comment": "No independent sample-rate control is exposed by this recorder.",
         "sample_rate_hz": null,
         "subchannels": 2
@@ -89,7 +83,7 @@
       {
         "name": "40g DC Acceleration",
         "id": 80,
-        "enabled": true,
+        "enabled": false,
         "sample_rate_hz": 4000,
         "supported_sample_rates_hz": [16, 32, 63, 125, 250, 500, 1000, 2000, 4000],
         "subchannels": 3
@@ -97,7 +91,7 @@
       {
         "name": "Rotation",
         "id": 84,
-        "enabled": true,
+        "enabled": false,
         "sample_rate_hz": 400,
         "supported_sample_rates_hz": [25, 50, 100, 200, 400, 800, 1600, 3200],
         "subchannels": 3

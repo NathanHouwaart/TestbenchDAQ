@@ -1,0 +1,26 @@
+{
+  "_comment": "Copy to machine.json. This describes one installed acquisition host and stays local/untracked.",
+  "schema": "testbenchdaq/machine/v1",
+  "machine_name": "lager-testbank",
+  "output_root": "/mnt/testbench-results",
+  "gator": {
+    "binary_path": "/usr/local/bin/gator_recorder",
+    "library_path": "",
+    "device_index": null,
+    "start_timeout_s": 30,
+    "stop_timeout_s": 10
+  },
+  "endaq": {
+    "serial": null,
+    "model": null,
+    "mount_path": null,
+    "ide_converter_path": null,
+    "command_timeout_s": 30,
+    "remount_timeout_s": 120,
+    "minimum_free_space_bytes": 1073741824,
+    "estimated_bytes_per_second": null,
+    "recording_time_limit_s": null,
+    "recording_size_limit_bytes": null,
+    "delete_after_verified_offload": false
+  }
+}

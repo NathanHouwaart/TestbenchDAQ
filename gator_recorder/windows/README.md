@@ -30,22 +30,19 @@ local testing only. It does not install or redistribute a runtime.
 
 ## Short hardware validation
 
-With the Gator connected, run a short diagnostic capture. Use the explicit
-binary path because a Windows runtime installer is intentionally not included
-yet:
+With the Gator connected, make local copies of the two configuration examples.
+In `machine.json`, set `output_root` to `C:\\TestbenchDAQ-data` and
+`gator.binary_path` to `.\\gator_recorder\\build\\Release\\gator_recorder.exe`.
+In `acquisition.json`, configure a diagnostic 10-second window and enable
+Gator with the intended channel, full scale, and sample rate. Then run:
 
 ```powershell
+Copy-Item machine.example.json machine.json
+Copy-Item acquisition.example.json acquisition.json
 python main.py `
-  --output-root C:\TestbenchDAQ-data `
-  --allow-local-output `
-  --gator `
-  --gator-binary .\gator_recorder\build\Release\gator_recorder.exe `
-  --gator-channel 1 `
-  --gator-fullscale 9 `
-  --gator-samplerate 5000 `
-  --mode diagnostic `
-  --run-duration-s 10 `
-  --name windows-gator-smoke-test
+  --machine machine.json `
+  --acquisition acquisition.json `
+  --allow-local-output
 ```
 
 Inspect the resulting raw CSV, session manifest, and eight exported signal

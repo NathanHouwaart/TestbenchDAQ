@@ -13,7 +13,8 @@ gator_recorder/build/
 build/
 
 # Machine-specific configuration and acquired data
-config.json
+machine.json
+acquisition.json
 csv-output/
 data/
 *.log

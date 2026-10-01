@@ -393,7 +393,8 @@ class EndaqAdapter:
             )
             return (
                 f"No mounted enDAQ{serial_hint} found.{detail} "
-                "If it is recording, run: tbdaq --config config.json endaq-stop"
+                "If it is recording, run: tbdaq --machine machine.json "
+                "--acquisition acquisition.json endaq-stop"
             )
         if len(devices) > 1:
             return (

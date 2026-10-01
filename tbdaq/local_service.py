@@ -379,12 +379,12 @@ def _current_run(manifest: Mapping[str, Any] | None) -> int | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run TestbenchDAQ's localhost control service.")
-    parser.add_argument("--config", required=True, type=Path, help="Protected local machine JSON config")
+    parser.add_argument("--machine", required=True, type=Path, help="Protected local machine JSON")
     parser.add_argument("--port", default=8765, type=int)
     parser.add_argument("--allow-local-output", action="store_true")
     args = parser.parse_args()
     uvicorn.run(
-        create_app(args.config, allow_local_output=args.allow_local_output),
+        create_app(args.machine, allow_local_output=args.allow_local_output),
         host="127.0.0.1", port=args.port,
     )
     return 0

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
-# Shared config-first launcher. Set TBDAQ_CONFIG to use a different file.
+# Shared split-configuration launcher. Both files are required.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-CONFIG_PATH="${TBDAQ_CONFIG:-$PROJECT_DIR/config.json}"
+MACHINE_PATH="${TBDAQ_MACHINE:-$PROJECT_DIR/machine.json}"
+ACQUISITION_PATH="${TBDAQ_ACQUISITION:-$PROJECT_DIR/acquisition.json}"
 
-if [[ ! -f "$CONFIG_PATH" ]]; then
-  echo "Configuration not found: $CONFIG_PATH" >&2
-  echo "Copy config_example.json to config.json and edit it first." >&2
+if [[ ! -f "$MACHINE_PATH" || ! -f "$ACQUISITION_PATH" ]]; then
+  echo "Machine or acquisition configuration is missing." >&2
+  echo "Copy machine.example.json to machine.json and acquisition.example.json to acquisition.json first." >&2
   exit 2
 fi
 
@@ -17,4 +18,5 @@ if [[ ! -x "$PROJECT_DIR/.venv/bin/tbdaq" ]]; then
   exit 2
 fi
 
-exec "$PROJECT_DIR/.venv/bin/tbdaq" --config "$CONFIG_PATH" "$@"
+exec "$PROJECT_DIR/.venv/bin/tbdaq" \
+  --machine "$MACHINE_PATH" --acquisition "$ACQUISITION_PATH" "$@"
