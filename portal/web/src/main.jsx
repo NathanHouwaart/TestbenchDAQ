@@ -69,7 +69,17 @@ function Overview() {
 function Machine({machine}) {
   const [sessions,setSessions]=useState([]),[session,setSession]=useState(null),[files,setFiles]=useState([]),[folder,setFolder]=useState([]),[expanded,setExpanded]=useState(new Set()),[file,setFile]=useState(null),[preview,setPreview]=useState(null),[manifest,setManifest]=useState(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[dark,setDark]=useState(localStorage.theme!=="light");
   useEffect(()=>{document.documentElement.classList.toggle("light",!dark);localStorage.theme=dark?"dark":"light"},[dark]);
-  useEffect(()=>{const load=()=>{setLoading(true);fetch(`${api}/machines/${machine}/sessions`).then(r=>r.json()).then(setSessions).finally(()=>setLoading(false))};load();const timer=setInterval(load,5000);return()=>clearInterval(timer)},[machine]);
+  useEffect(()=>{
+    const load=(initial=false)=>{
+      if(initial)setLoading(true);
+      fetch(`${api}/machines/${machine}/sessions`).then(r=>r.json()).then(setSessions).finally(()=>{
+        if(initial)setLoading(false);
+      });
+    };
+    load(true);
+    const timer=setInterval(()=>load(false),5000);
+    return()=>clearInterval(timer);
+  },[machine]);
   const open=async item=>{setSession(item);setFiles([]);setFolder([]);setExpanded(new Set());setFile(null);setPreview(null);setManifest(null);setBusy(true);try{setFiles(await fetch(`${api}/machines/${machine}/sessions/${encodeURIComponent(item.session_id)}/artifacts`).then(r=>r.json()))}finally{setBusy(false)}};
   const loadCsv=async(selected,offset=0)=>{setBusy(true);try{setPreview(await fetch(`${api}/machines/${machine}/sessions/${encodeURIComponent(session.session_id)}/csv-preview/${enc(selected.path)}?offset=${offset}`).then(r=>r.json()))}finally{setBusy(false)}};
   const selectFolder=path=>{setFolder(path);setFile(null);setPreview(null);setManifest(null)};
