@@ -96,6 +96,7 @@ class ProcessingWorker:
             manifest["ended_at_utc"] = _utc_now()
             _set_phase(manifest, "completed")
             _write_json(session_dir / "session_manifest.json", manifest)
+            _write_acquisition_session_manifest(session_dir, manifest)
             claim.unlink(missing_ok=True)
         except Exception as exc:
             _LOG.exception("Processing failed for %s", session_dir.name)
@@ -171,6 +172,38 @@ def _relative_session_path(session_dir: Path, value: Any) -> str:
         return path.resolve().relative_to(session_dir.resolve()).as_posix()
     except ValueError:
         return path.name
+
+
+def _write_acquisition_session_manifest(session_dir: Path, manifest: dict[str, Any]) -> None:
+    """Publish the Wizard-facing contract after server-side conversion."""
+    windows: list[dict[str, Any]] = []
+    for run in manifest.get("runs", []):
+        measurement = run.get("measurement_window", {})
+        files = [{
+            "path": _relative_session_path(session_dir, signal.get("path")),
+            "source": _family(str(signal.get("alias") or "")),
+            "channel_name": str(signal.get("alias") or "unnamed"),
+            "data_shape": "time_series",
+            "timing_alignment": "unknown",
+        } for signal in run.get("signals", []) if signal.get("path")]
+        windows.append({
+            "acquisition_window_id": run["run_id"],
+            "directory": run["run_id"],
+            "started_at_utc": measurement.get("start_utc") or run.get("orchestrator_start_utc"),
+            "ended_at_utc": (
+                measurement.get("stop_requested_utc")
+                or run.get("ended_at_utc")
+                or manifest["ended_at_utc"]
+            ),
+            "files": files,
+        })
+    _write_json(session_dir / "acquisition-session.json", {
+        "schema_version": "isa-phm/acquisition-session/v1",
+        "session_id": manifest["session_id"],
+        "producer": {"name": "TestbenchDAQ"},
+        "timing_alignment": "unknown",
+        "acquisition_windows": windows,
+    })
 
 
 def main() -> int:
