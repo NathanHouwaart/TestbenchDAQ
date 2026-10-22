@@ -63,7 +63,8 @@ class Session:
         self._session_dir = Path(config.output_root) / self._session_id
         self._session_dir.mkdir(parents=True, exist_ok=False)
         self._manifest_path = self._session_dir / "session_manifest.json"
-        self._export_map_path = self._session_dir / "signal_export_map.csv"
+        self._acquisition_manifest_path = self._session_dir / "acquisition-session.json"
+        self._export_map_path = self._session_dir / "acquisition_window_map.csv"
         self._log_handler = self._install_file_logging()
         self._adapters = dict(adapters) if adapters is not None else self._build_adapters()
         self._deferred_processing: list[
@@ -102,8 +103,9 @@ class Session:
             "runs": [],
             "artifacts": {
                 "manifest": str(self._manifest_path),
+                "acquisition_session": str(self._acquisition_manifest_path),
                 "log": str(self._session_dir / "session.log"),
-                "signal_export_map": str(self._export_map_path),
+                "acquisition_window_map": str(self._export_map_path),
             },
             "limitations": [
                 "Signal CSV output is an interim format, not a complete ISA-PHM serialization.",
@@ -207,7 +209,7 @@ class Session:
                             _LOG.error(abort_message)
                             self._manifest["runs"].append(
                                 {
-                                    "run_id": f"run_{run_number:02d}",
+                                    "run_id": f"window_{run_number:03d}",
                                     "run_number": run_number,
                                     "status": "aborted",
                                     "planned_start_utc": _iso_utc(planned_wall),
@@ -306,7 +308,9 @@ class Session:
         active_adapters: Mapping[str, Any],
     ) -> dict[str, Any]:
         self._set_live_status("starting", run_number)
-        run_id = f"run_{run_number:02d}"
+        # "run" is an internal scheduler term. The persisted directory is a
+        # neutral acquisition window: it is not yet an ISA-PHM Study or Run.
+        run_id = f"window_{run_number:03d}"
         total_runs = "unlimited" if self._config.run_count is None else str(self._config.run_count)
         _LOG.info(
             "Run %02d/%s: starting %s acquisition.",
@@ -591,12 +595,12 @@ class Session:
                 self._export_map_path,
                 [
                     {
-                        "run_id": record["run_id"],
+                        "acquisition_window_id": record["run_id"],
                         "device_family": _signal_family(signal),
                         "signal_alias": signal.alias,
-                        "source_file": signal.source_file,
+                        "source_file": _relative_session_path(self._session_dir, signal.source_file),
                         "source_column": signal.source_column,
-                        "signal_path": str(signal.path),
+                        "signal_path": _relative_session_path(self._session_dir, signal.path),
                         "time_unit": "s",
                         "sample_count": signal.sample_count,
                         "first_time_s": signal.first_time_s,
@@ -800,6 +804,7 @@ class Session:
         self._manifest["abort_reason"] = reason
         self._manifest["ended_at_utc"] = _iso_utc(self._clock())
         self._set_live_status(status)
+        self._write_acquisition_session_manifest()
         return self._manifest
 
     def _set_live_status(self, phase: str, run_number: Optional[int] = None) -> None:
@@ -817,6 +822,47 @@ class Session:
             encoding="utf-8",
         )
         temporary.replace(self._manifest_path)
+
+    def _write_acquisition_session_manifest(self) -> None:
+        """Write the public, machine-neutral acquisition contract."""
+        windows: list[dict[str, Any]] = []
+        for run in self._manifest["runs"]:
+            measurement = run.get("measurement_window", {})
+            files = [
+                {
+                    "path": _relative_session_path(self._session_dir, signal.get("path")),
+                    "source": _signal_source(signal),
+                    "channel_name": str(signal.get("alias") or "unnamed"),
+                    "data_shape": "time_series",
+                    "timing_alignment": "unknown",
+                }
+                for signal in run.get("signals", [])
+                if signal.get("path")
+            ]
+            windows.append({
+                "acquisition_window_id": run["run_id"],
+                "directory": run["run_id"],
+                "started_at_utc": measurement.get("start_utc") or run.get("orchestrator_start_utc"),
+                "ended_at_utc": (
+                    measurement.get("stop_requested_utc")
+                    or run.get("ended_at_utc")
+                    or self._manifest["ended_at_utc"]
+                ),
+                "files": files,
+            })
+        public_manifest = {
+            "schema_version": "isa-phm/acquisition-session/v1",
+            "session_id": self._session_id,
+            "producer": {"name": "TestbenchDAQ"},
+            "timing_alignment": "unknown",
+            "acquisition_windows": windows,
+        }
+        temporary = self._acquisition_manifest_path.with_suffix(".json.tmp")
+        temporary.write_text(
+            json.dumps(public_manifest, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(self._acquisition_manifest_path)
 
     def _install_file_logging(self) -> logging.Handler:
         handler = logging.FileHandler(self._session_dir / "session.log", encoding="utf-8")
@@ -880,3 +926,18 @@ def _serialize_signal(signal: SignalFile) -> dict[str, Any]:
 
 def _signal_family(signal: SignalFile) -> str:
     return "gator" if signal.alias.startswith("gator") else "endaq"
+
+
+def _relative_session_path(session_dir: Path, value: Any) -> str:
+    path = Path(str(value))
+    try:
+        return path.resolve().relative_to(session_dir.resolve()).as_posix()
+    except ValueError:
+        # Recorder adapters may only know a basename (or an external raw
+        # source). Never leak an absolute host path into the public contract.
+        return path.name
+
+
+def _signal_source(signal: Mapping[str, Any]) -> str:
+    alias = str(signal.get("alias") or "")
+    return "gator" if alias.startswith("gator") else "endaq"

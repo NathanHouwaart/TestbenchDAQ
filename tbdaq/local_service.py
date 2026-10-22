@@ -193,7 +193,7 @@ class LocalServiceController:
                 "state": "starting",
                 "session_id": request.session_id,
                 "session_root": str(session.session_dir),
-                "run_root": str(session.session_dir / "run_01"),
+                "run_root": str(session.session_dir / "window_001"),
             }
 
     def complete(self) -> dict[str, Any]:
@@ -231,7 +231,7 @@ class LocalServiceController:
                     "state": _active_state(manifest),
                     "session_id": request.session_id,
                     "run_number": _current_run(manifest),
-                    "run_root": str(session.session_dir / "run_01"),
+                    "run_root": str(session.session_dir / "window_001"),
                     "error": error,
                 },
             }
@@ -244,7 +244,7 @@ class LocalServiceController:
                 "state": _terminal_state(latest, error),
                 "session_id": request.session_id,
                 "run_number": _current_run(latest),
-                "run_root": str(session.session_dir / "run_01"),
+                "run_root": str(session.session_dir / "window_001"),
                 "error": error or (latest or {}).get("abort_reason"),
             },
         }

@@ -168,6 +168,14 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(gator.start_calls, 1)
         self.assertEqual(gator.stop_calls, 1)
         self.assertTrue((self.root / "success" / "session_manifest.json").is_file())
+        acquisition_manifest = json.loads(
+            (self.root / "success" / "acquisition-session.json").read_text()
+        )
+        self.assertEqual(acquisition_manifest["schema_version"], "isa-phm/acquisition-session/v1")
+        self.assertEqual(acquisition_manifest["acquisition_windows"][0]["directory"], "window_001")
+        self.assertTrue(
+            acquisition_manifest["acquisition_windows"][0]["files"][0]["path"].startswith("window_001/")
+        )
         self.assertEqual(manifest["live_status"]["phase"], "success")
         self.assertEqual(manifest["storage"]["mode"], "nfs")
 
@@ -470,7 +478,7 @@ class SessionTests(unittest.TestCase):
         self.assertEqual(manifest["runs"][0]["status"], "interrupted")
         self.assertEqual(manifest["runs"][0]["processing_status"], "success")
         self.assertTrue(
-            (self.root / "interrupted-deferred" / "run_01" / "signals" / "endaq"
+            (self.root / "interrupted-deferred" / "window_001" / "signals" / "endaq"
              / "endaq_signal.csv").is_file()
         )
 

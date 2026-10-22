@@ -435,7 +435,7 @@ def export_endaq_ide_signals(
 # ---------------------------------------------------------------------------
 
 _EXPORT_MAP_COLUMNS = [
-    "run_id", "device_family", "signal_alias",
+    "acquisition_window_id", "device_family", "signal_alias",
     "source_file", "source_column", "signal_path",
     "time_unit", "sample_count", "first_time_s", "last_time_s",
     "alignment_method", "status", "error",

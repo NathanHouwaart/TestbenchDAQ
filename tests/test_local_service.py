@@ -44,8 +44,9 @@ class FakeSession:
         self.stop_requested.set()
 
     def _write(self, phase: str):
+        status = "success" if phase == "success" else "interrupted" if phase == "interrupted" else None
         (self.session_dir / "session_manifest.json").write_text(
-            json.dumps({"live_status": {"phase": phase, "current_run": 1}}),
+            json.dumps({"status": status, "live_status": {"phase": phase, "current_run": 1}}),
             encoding="utf-8",
         )
 

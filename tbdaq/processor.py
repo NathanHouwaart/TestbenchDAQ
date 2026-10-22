@@ -87,10 +87,10 @@ class ProcessingWorker:
                             "successful_signals": sum(s.status == "success" for s in family_signals),
                             "failed_signals": sum(s.status != "success" for s in family_signals),
                         }
-                rows.extend(_signal_rows(run["run_id"], signals))
+                rows.extend(_signal_rows(session_dir, run["run_id"], signals))
                 if failed:
                     raise RuntimeError(f"Signal conversion failed for {run_dir.name}.")
-            write_signal_map(session_dir / "signal_export_map.csv", rows)
+            write_signal_map(session_dir / "acquisition_window_map.csv", rows)
             processing.update({"status": "completed", "completed_at_utc": _utc_now(), "last_error": None})
             manifest["status"] = "success"
             manifest["ended_at_utc"] = _utc_now()
@@ -154,15 +154,23 @@ def _signal_dict(signal: Any) -> dict[str, Any]:
     )} | {"path": str(signal.path)}
 
 
-def _signal_rows(run_id: str, signals: list[Any]) -> list[dict[str, Any]]:
+def _signal_rows(session_dir: Path, run_id: str, signals: list[Any]) -> list[dict[str, Any]]:
     return [{
-        "run_id": run_id, "device_family": _family(signal.alias), "signal_alias": signal.alias,
-        "source_file": signal.source_file, "source_column": signal.source_column,
-        "signal_path": str(signal.path), "time_unit": "s", "sample_count": signal.sample_count,
+        "acquisition_window_id": run_id, "device_family": _family(signal.alias), "signal_alias": signal.alias,
+        "source_file": _relative_session_path(session_dir, signal.source_file), "source_column": signal.source_column,
+        "signal_path": _relative_session_path(session_dir, signal.path), "time_unit": "s", "sample_count": signal.sample_count,
         "first_time_s": signal.first_time_s, "last_time_s": signal.last_time_s,
         "alignment_method": signal.alignment_method or "", "status": signal.status,
         "error": signal.error or "",
     } for signal in signals]
+
+
+def _relative_session_path(session_dir: Path, value: Any) -> str:
+    path = Path(str(value))
+    try:
+        return path.resolve().relative_to(session_dir.resolve()).as_posix()
+    except ValueError:
+        return path.name
 
 
 def main() -> int:
