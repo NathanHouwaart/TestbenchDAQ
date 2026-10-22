@@ -10,6 +10,7 @@ import time
 from typing import Any
 
 from tbdaq.isa_export import export_endaq_ide_signals, export_gator_signals, write_signal_map
+from tbdaq.plc_slicing import slice_plc_by_acquisition_window
 
 _LOG = logging.getLogger(__name__)
 _REQUEST = "processing-request.json"
@@ -96,7 +97,8 @@ class ProcessingWorker:
             manifest["ended_at_utc"] = _utc_now()
             _set_phase(manifest, "completed")
             _write_json(session_dir / "session_manifest.json", manifest)
-            _write_acquisition_session_manifest(session_dir, manifest)
+            plc_files = slice_plc_by_acquisition_window(session_dir, manifest)
+            _write_acquisition_session_manifest(session_dir, manifest, plc_files)
             claim.unlink(missing_ok=True)
         except Exception as exc:
             _LOG.exception("Processing failed for %s", session_dir.name)
@@ -174,7 +176,9 @@ def _relative_session_path(session_dir: Path, value: Any) -> str:
         return path.name
 
 
-def _write_acquisition_session_manifest(session_dir: Path, manifest: dict[str, Any]) -> None:
+def _write_acquisition_session_manifest(
+    session_dir: Path, manifest: dict[str, Any], plc_files: list[dict[str, str]],
+) -> None:
     """Publish the Wizard-facing contract after server-side conversion."""
     windows: list[dict[str, Any]] = []
     for run in manifest.get("runs", []):
@@ -186,6 +190,15 @@ def _write_acquisition_session_manifest(session_dir: Path, manifest: dict[str, A
             "data_shape": "time_series",
             "timing_alignment": "unknown",
         } for signal in run.get("signals", []) if signal.get("path")]
+        files.extend({
+            "path": item["path"],
+            "source": "plc",
+            "channel_name": Path(item["path"]).stem,
+            "data_shape": "time_series",
+            "time_column": "Time",
+            "derived_from": item["derived_from"],
+            "timing_alignment": "approximate_host_time",
+        } for item in plc_files if item["window_id"] == run["run_id"])
         windows.append({
             "acquisition_window_id": run["run_id"],
             "directory": run["run_id"],
