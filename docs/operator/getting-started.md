@@ -87,4 +87,5 @@ The old `single`, `burst`, `soak`, `gator_only`, and `continuous` helpers are
 compatibility aliases. They no longer override a measurement: make that choice
 in `acquisition.json` so a run is reproducible and portable.
 
-For NFS setup and the read-only portal, see [central storage and data portal](data-portal.md).
+For NFS setup and the read-only portal, see
+[portal and shared storage](../engineering/portal-and-storage.md).

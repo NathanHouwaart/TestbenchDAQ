@@ -218,7 +218,7 @@ Each machine uses a matching `machine.json`:
 ```
 
 For the acquisition-host setup and a first measurement, see the
-[getting-started guide](getting-started.md).
+[operator getting-started guide](../operator/getting-started.md).
 
 Before hardware is commanded, TestbenchDAQ verifies that `output_root` is
 writable NFS/NFSv4 storage. For a deliberately local run, an operator may use

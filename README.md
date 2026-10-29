@@ -1,87 +1,72 @@
 # TestbenchDAQ
 
 TestbenchDAQ acquires external-sensor measurements from a test bench. It
-coordinates a PhotonFirst Gator FBG interrogator and an enDAQ recorder from
-one command-line application on the Linux acquisition host.
+coordinates a PhotonFirst Gator FBG interrogator and an enDAQ recorder on a
+Linux acquisition host. It does not control the PLC; the Lager-Testbank GUI
+coordinates PLC operation with the local DAQ service.
 
-It supports two kinds of data-collection experiments for predictive-maintenance
-research:
+TestbenchDAQ preserves raw recorder files, derived per-sensor signal CSVs, and
+an operational session manifest. It does not itself create a final ISA-PHM
+dataset.
 
-- **Diagnostic tests** capture a system's response to a controlled fault.
-- **Prognostic tests** collect repeated measurements in a run-to-failure
-  experiment as degradation develops.
-
-TestbenchDAQ acquires and preserves the measurement files; it does **not**
-create an ISA-PHM dataset. Its per-sensor time/value CSV files and session
-manifest prepare the acquisition output for later bundling in the ISA-PHM
-wizard with test-bench operating-condition data and experiment metadata.
-
-## How it fits together
+## Architecture
 
 ```mermaid
 flowchart LR
-    Bench[Physical test bench\nand device under test]
-    PLC[PLC / controller\noperating-condition CSV files]
-    Gator[Gator FBG interrogator]
-    enDAQ[enDAQ recorder]
-    Host[Linux acquisition host\nTestbenchDAQ]
-    Local[Local session storage\nexplicit development option]
-    NFS[NFS server storage\nnormal shared experiments]
-    Portal[Read-only data portal]
-    Wizard[ISA-PHM wizard]
-    Dataset[Complete documented\nPHM dataset]
-
-    Bench --> Gator
-    Bench --> enDAQ
-    Gator --> Host
-    enDAQ --> Host
-    Host -->|raw files, per-sensor CSVs, manifest| Local
-    Host -->|raw files, per-sensor CSVs, manifest| NFS
-    NFS --> Portal
-    PLC -->|separate, future-integrated stream| Wizard
-    Local --> Wizard
-    NFS --> Wizard
-    Wizard --> Dataset
+    Bench[Physical test bench] --> PLC[PLC/controller]
+    Bench --> Gator[Gator]
+    Bench --> enDAQ[enDAQ]
+    PLC --> GUI[Lager-Testbank GUI]
+    GUI --> Service[Local TestbenchDAQ service]
+    Gator --> Service
+    enDAQ --> Service
+    Service --> NFS[NFS session storage]
+    NFS --> Processor[Portal conversion worker]
+    Processor --> Portal[Read-only data portal]
+    NFS --> Wizard[Future ISA-PHM Wizard]
 ```
 
-Recordings can be stored locally or on an external NFS server. Storing them
-on the server prevents the acquisition computer's internal disk from filling
-up. The server portal lets you remotely view and download recordings.
+## Configuration model
+
+Each standalone command combines two files:
+
+- `machine.json`: local installed-hardware and storage configuration;
+- `acquisition.json`: portable measurement schedule and sensor settings.
+
+This prevents an experiment from changing machine identity, recorder mounting,
+or where the host writes data. The GUI follows the same boundary: it sends the
+acquisition request while the service retains the protected machine settings.
 
 ## Start here
 
-The supported production path is **Linux on AArch64** with Python 3.11 or
-newer. Gator acquisition requires a separately distributed PhotonFirst runtime;
-the installer retrieves the approved version for authorized users.
+The supported production path is Linux on AArch64 with Python 3.11 or newer.
+Gator acquisition requires a separately distributed PhotonFirst runtime.
 
 ```bash
 git clone https://github.com/NathanHouwaart/TestbenchDAQ.git
 cd TestbenchDAQ
-./scripts/install/setup_linux.sh
+./scripts/install/setup_linux.sh --all
 ```
 
-The guided setup installs the Python application, asks whether to install
-Gator and/or enDAQ support, and verifies `tbdaq --help`. For unattended setup,
-use `--gator`, `--endaq`, or `--all`; see the
-[getting-started guide](docs/getting-started.md) for prerequisites, first runs,
-and troubleshooting.
+Then follow the [operator getting-started guide](docs/operator/getting-started.md).
 
-Windows has an **experimental**, Gator-only native helper for local hardware
-validation. It is not a supported production-acquisition or enDAQ workflow;
+Windows has an experimental Gator-only helper for local hardware validation;
 see [the Windows helper guide](gator_recorder/windows/README.md).
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md) — install, configure, verify, and
-  take a first local measurement.
-- [Command cookbook](docs/command-cookbook.md) — copyable local and NFS-backed
-  diagnostic and prognostic commands.
-- [Command reference (man page)](docs/tbdaq-manual.md) — every `tbdaq` action
-  and option.
-- [Central storage and data portal](docs/data-portal.md) — configure normal
-  NFS-backed storage and the read-only server portal.
-- [Design contract](docs/design.md) — lifecycle, safety, scheduling, and
-  timing behavior.
+Start with the operator documents when setting up or running a measurement:
+
+- [Getting started](docs/operator/getting-started.md)
+- [Machine and acquisition files](docs/operator/acquisition-files.md)
+
+Engineering and deployment documents explain how the parts fit together:
+
+- [Architecture and lifecycle](docs/engineering/architecture.md)
+- [Local service and GUI integration](docs/engineering/local-service-and-gui.md)
+- [Portal and shared storage](docs/engineering/portal-and-storage.md)
+- [Deployment overview](docs/engineering/deployment.md)
+- [Acquisition-session export contract](docs/contracts/acquisition-session.md)
 
 ## Development
 

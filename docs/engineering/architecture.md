@@ -1,4 +1,10 @@
-# Phase 2 design contract
+# Architecture and lifecycle
+
+This document is the engineering contract for acquisition safety, recorder
+lifecycle, scheduling, and timestamp meaning. For the GUI boundary, see
+[local service and GUI integration](local-service-and-gui.md); for the
+operator-facing configuration split, see
+[machine and acquisition files](../operator/acquisition-files.md).
 
 ## Safety defaults
 
@@ -14,7 +20,8 @@
 A session progresses through:
 
 ```text
-initializing -> preflight -> running -> success | partial | failed
+initializing -> preflight -> running -> processing -> success | partial | failed
+                                      -> queued
                                       -> aborted | interrupted
 ```
 
@@ -30,18 +37,25 @@ after every run, and at terminal session status.
 
 ## Scheduling
 
-Prognostic run starts are calculated from one monotonic base time. Completion
-of the preceding run does not redefine the schedule. This prevents processing
-time from silently shifting a test program.
+TestbenchDAQ schedules acquisition windows. A one-window diagnostic capture,
+repeated diagnostic checks, and a run-to-failure experiment all use the same
+timing model. Planned starts are calculated from one monotonic base time;
+completion of the preceding run does not redefine the schedule. This prevents
+processing time from silently shifting a test program.
 
 If the next start is later than its configured tolerance, the default `abort`
 policy stops the session with an explicit error. `start_late` is an opt-in
 policy that records the lateness and continues immediately.
 
 enDAQ stop, remount, offload, and checksum verification are part of every run.
-Prognostic Gator and enDAQ signal export is deferred until scheduled acquisition
-has ended. This separates mandatory recorder-space management from optional,
+Gator and enDAQ signal export may be deferred until scheduled acquisition has
+ended. This separates mandatory recorder-space management from optional,
 potentially expensive CSV processing.
+
+For an NFS-backed local-service session, TestbenchDAQ writes a processing
+request only after the raw session is safe. The central worker claims that
+request, writes derived signals, and updates processing status. Local-output
+sessions process on their acquisition host instead.
 
 IDE signals are exported directly from one parsed/calibrated IDE document.
 Final CSV formatting is chunked; intermediate combined channel CSVs are not
